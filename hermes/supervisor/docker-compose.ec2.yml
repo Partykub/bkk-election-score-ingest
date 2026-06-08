@@ -1,0 +1,43 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ${OLLAMA_CONTAINER_NAME:-ollama}
+    restart: unless-stopped
+    volumes:
+      - ${OLLAMA_DATA_DIR:-./ollama/data}:/root/.ollama
+    expose:
+      - "${OLLAMA_PORT:-11434}"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:${OLLAMA_PORT:-11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+        ollama pull "$OLLAMA_MODEL"
+
+  hermes-supervisor:
+    extends:
+      file: ./docker-compose.yml
+      service: hermes-supervisor
+    depends_on:
+      ollama:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
