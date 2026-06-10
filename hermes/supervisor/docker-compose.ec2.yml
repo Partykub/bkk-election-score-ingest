@@ -41,3 +41,20 @@ services:
         condition: service_started
       ollama-init:
         condition: service_completed_successfully
+
+  ocr-worker:
+    extends:
+      file: ./docker-compose.yml
+      service: ocr-worker
+    depends_on:
+      ollama:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
+      hermes-supervisor:
+        condition: service_started
+
+  update-worker:
+    extends:
+      file: ./docker-compose.yml
+      service: update-worker

@@ -29,16 +29,16 @@
 
 ใช้ `Hermes`: ใช่
 
-### 2. Hermes OCR Worker
+### 2. OCR Worker
 
 หน้าที่:
 
 - ดึงรูปจาก object storage
-- ใช้ `Hermes + LLM` อ่านรูป
+- ใช้ `Hermes + LLM` อ่านรูปผ่าน OpenAI-compatible API ของ Hermes
 - extract ข้อมูลแบบ structured เช่น เขต, เบอร์ผู้สมัคร, คะแนน
 - ส่งผลกลับเข้าระบบเป็น OCR result
 
-ใช้ `Hermes`: ใช่
+ใช้ `Hermes`: ใช่, แต่ local implementation ปัจจุบันเป็น Python worker ที่เรียก Hermes endpoint ไม่ใช่ Hermes runtime ตัวที่สอง
 
 ### 3. Update Worker
 
@@ -56,6 +56,8 @@
 
 - งาน update เป็นงาน deterministic ไม่ควรใช้ LLM
 - ใช้ service ปกติ เช่น `Go`, `Node.js`, หรือ `Python` worker ได้
+- `paddle_ocr/` ใน repo เป็นพื้นที่ทดลองแยกต่างหาก ไม่ใช่ production OCR path ของระบบนี้
+- ใน repo ตอนนี้มี `hermes.update_worker` เป็น Python scaffold สำหรับ queue/config/manifest wiring แล้ว แต่ยังไม่ยิง AWS target API จริง
 
 ## Role vs Instance
 
@@ -65,7 +67,7 @@
 ตัวอย่าง:
 
 - `Hermes Supervisor` = 1 role
-- `Hermes OCR Worker` = 1 role
+- `OCR Worker` = 1 role
 - `Update Worker` = 1 role
 
 รวมทั้งระบบ = `3 roles`
@@ -73,7 +75,7 @@
 แต่ตอน deploy จริงอาจรันเป็น:
 
 - `Hermes Supervisor` = `1-2 instances`
-- `Hermes OCR Worker` = `1-4 instances`
+- `OCR Worker` = `1-4 instances`
 - `Update Worker` = `1-2 instances`
 
 ดังนั้นจำนวน instance มากกว่า role ได้เป็นเรื่องปกติ
@@ -83,7 +85,7 @@
 เริ่มต้นแบบง่าย:
 
 - `Hermes Supervisor` = `1`
-- `Hermes OCR Worker` = `1-2`
+- `OCR Worker` = `1-2`
 - `Update Worker` = `1`
 
 รวม = `3-4 instances`
@@ -91,7 +93,7 @@
 ถ้ารับโหลดมากขึ้น:
 
 - `Hermes Supervisor` = `2`
-- `Hermes OCR Worker` = `2-4`
+- `OCR Worker` = `2-4`
 - `Update Worker` = `1-2`
 
 รวม = `5-8 instances`
@@ -107,7 +109,7 @@
 - `Hermes Supervisor`
 - `Queue`
 - `Object Storage`
-- `Hermes OCR Worker`
+- `OCR Worker`
 - `Database`
 - `Update Worker`
 - `AWS Target API`
@@ -126,12 +128,12 @@
 2. `Line` ส่ง webhook event ไปที่ `Hermes Supervisor`
 3. `Hermes Supervisor` ตรวจ signature และสิทธิ์ผู้ส่ง
 4. `Hermes Supervisor` สร้าง `source_message`
-5. `Hermes Supervisor` สร้าง dedupe keys เช่น `event_id`, `message_id`, `file_hash`
+5. `Hermes Supervisor` สร้าง dedupe keys เช่น `event_id` และ `message_id`
 6. `Hermes Supervisor` เก็บรูปลง object storage
 7. `Hermes Supervisor` enqueue OCR job
 8. `Hermes Supervisor` ตอบกลับในแชทว่าได้รับข้อมูลแล้ว
-9. `Hermes OCR Worker` ดึงงานจาก queue
-10. `Hermes OCR Worker` ใช้ `Hermes + LLM` อ่านรูป
+9. `OCR Worker` ดึงงานจาก queue
+10. `OCR Worker` ใช้ `Hermes + LLM` อ่านรูป
 11. ระบบได้ structured result เช่น `area_id`, `candidate_number`, `score`, `confidence`
 12. ระบบตรวจ validation เบื้องต้น
 13. ระบบสร้าง `draft`
@@ -180,7 +182,7 @@
 5. รูปทั้งหมดถูกเก็บลง storage
 6. สร้าง `55 OCR jobs`
 7. OCR jobs ทั้งหมดถูกส่งเข้า queue
-8. `Hermes OCR Worker` ดึงงานไปทำตาม concurrency limit เช่น `5` หรือ `10`
+8. `OCR Worker` ดึงงานไปทำตาม concurrency limit เช่น `5` หรือ `10`
 9. งานที่ OCR เสร็จก่อนจะได้ `draft` ก่อน
 10. `Hermes Supervisor` ส่งผล OCR ไปให้แต่ละผู้ส่งยืนยันเป็นรายข้อความ
 11. รายการที่ได้รับการยืนยันแล้วจะถูกส่งเข้า update queue
@@ -207,13 +209,13 @@
 
 กรณี `Line` retry webhook เดิม ระบบต้องไม่สร้างงานซ้ำ
 
-### 2. File Deduplication
+### 2. Message Deduplication
 
 ใช้:
 
-- `file_hash` เช่น `sha256`
+- `line_message_id`
 
-ถ้าผู้ใช้ส่งรูปเดิมซ้ำในช่วงเวลาใกล้กัน ระบบควร mark ว่าเป็น duplicate candidate
+ถ้า LINE retry หรือส่ง message เดิมซ้ำ ระบบต้องไม่สร้าง workflow entity ซ้ำ
 
 ### 3. Business Deduplication
 
@@ -228,7 +230,7 @@
 ## Duplicate Decision Rules
 
 - ถ้า `event_id` ซ้ำ: ignore ทันที
-- ถ้า `file_hash` ซ้ำและยังอยู่ใน session เดิม: ไม่ต้อง OCR ซ้ำ
+- ถ้า `message_id` ซ้ำ: ไม่ต้องสร้าง source message หรือ OCR job ซ้ำ
 - ถ้า OCR result ตรงกับข้อมูลล่าสุดในระบบ: ไม่ต้องยิง update ซ้ำ
 - ถ้าเป็นรูปใหม่แต่คะแนนเปลี่ยน: เข้ากระบวนการ approval ตามปกติ
 

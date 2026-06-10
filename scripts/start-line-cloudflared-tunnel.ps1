@@ -19,9 +19,22 @@ if (-not $resolvedConfigPath) {
     throw "Missing $ConfigPath. Copy hermes/supervisor/cloudflared/config.example.yml to hermes/supervisor/cloudflared/config.yml and fill in the real tunnel values first."
 }
 
+$envPath = Join-Path $PSScriptRoot "..\hermes\supervisor\.env"
+$relayPort = 8646
+if (Test-Path $envPath) {
+    $line = Get-Content $envPath | Where-Object { $_ -match '^SUPERVISOR_RELAY_PORT=' } | Select-Object -First 1
+    if ($line) {
+        $value = ($line -split '=', 2)[1].Trim()
+        $parsed = 0
+        if ([int]::TryParse($value, [ref]$parsed)) {
+            $relayPort = $parsed
+        }
+    }
+}
+
 Write-Host "Starting Cloudflare Tunnel..." -ForegroundColor Cyan
 Write-Host "Tunnel name : $TunnelName" -ForegroundColor DarkGray
 Write-Host "Config path : $resolvedConfigPath" -ForegroundColor DarkGray
-Write-Host "Target      : http://localhost:8646" -ForegroundColor DarkGray
+Write-Host "Target      : http://localhost:$relayPort" -ForegroundColor DarkGray
 
 cloudflared tunnel --config $resolvedConfigPath run $TunnelName

@@ -20,12 +20,22 @@ Notes on the current local path:
 ## What is included
 
 - `docker-compose.yml` to run the supervisor in gateway mode
-- `docker-compose.ec2.yml` to run Hermes and Ollama together on a Docker host such as AWS EC2
+- `docker-compose.ec2.yml` to run Hermes, Ollama, and the OCR worker together on a Docker host such as AWS EC2
+- `services/intake_server.py` as the active local Python intake service for LINE event persistence, event deduplication, and initial routing classification
+- `services/upload_service.py` as the current local storage abstraction for writing metadata into the planned S3-style layout
+- top-level `intake_server.py`, `line_webhook_relay.py`, and `upload_service.py` stay as compatibility entrypoints for scripts and tests
+- `test_intake_server.py` with focused tests for image intake, text command classification, and duplicate event handling
+- `../ocr_worker/__main__.py` as the OCR queue consumer that downloads jobs from SQS, calls the Hermes API, and writes drafts back to S3
+- `../ocr_worker/test_worker.py` with focused tests for queue parsing, OCR response normalization, approval prompt delivery, and manifest updates
+- `../update_worker/__main__.py` as the deterministic update worker for approved update jobs
 - `seed/SOUL.md` to pin the supervisor role and operating rules
 - `.env.example` for Docker-level runtime settings such as ports and dashboard auth
 - `.env.ec2.example` for the all-in-docker EC2 deployment path
 - `../../scripts/setup-hermes-supervisor.ps1` to create the runtime volume and run the interactive Hermes setup wizard
+- `../../scripts/start-election-local.ps1` to bring up the local Docker stack and launch the LINE relay for the real intake path
 - `../../scripts/start-hermes-supervisor.ps1` to start the container with Docker Compose
+- `../../scripts/start-hermes-ocr-worker.ps1` to start the OCR worker container with Docker Compose
+- `../../scripts/start-update-worker.ps1` to start the update worker container with Docker Compose
 - `../../scripts/start-hermes-supervisor-ec2.ps1` and `../../scripts/start-hermes-supervisor-ec2.sh` to start the EC2 all-in-docker stack
 
 ## Directory layout
@@ -34,7 +44,9 @@ Notes on the current local path:
 - `runtime-full/` is the current active runtime used for the local Ollama-based supervisor setup.
 - `runtime-ec2/` is the Docker-to-Docker runtime used when Hermes should call an Ollama sidecar service instead of the host machine.
 - `ollama/data/` is the persistent model store for the Ollama container in the EC2 deployment path.
-- `seed/` contains files that should be copied into `runtime/` before first boot.
+- `seed/` contains files that should be copied into the supervisor runtime before first boot.
+- `../ocr_worker/` contains the Python OCR worker service. It is not a second Hermes runtime volume.
+- `../update_worker/` contains the deterministic update worker package.
 
 ## First-time setup
 
@@ -72,12 +84,105 @@ Notes:
 
 Run `powershell -ExecutionPolicy Bypass -File .\scripts\start-hermes-supervisor.ps1` from the repository root.
 
+If you want the local stack in the shape that is actually used for LINE intake, run this instead:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-election-local.ps1`
+
+That script:
+
+- starts the Docker Compose stack
+- checks whether the LINE relay is already responding
+- launches the LINE relay in a separate PowerShell window when needed
+- leaves tunnel startup separate so you can choose `ngrok`, `cloudflared`, or `localhost.run`
+
 The service starts with:
 
 - gateway mode enabled
 - dashboard enabled on port `9119`
 - optional OpenAI-compatible API server on port `8642` when `API_SERVER_ENABLED=true`
 - LINE webhook listener on port `8646` when `gateway.platforms.line.enabled=true`
+- an `ocr-worker` Python container on the same Docker network
+- an optional `update-worker` container available through the `update-worker` Compose profile
+
+Start only the OCR worker container:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-hermes-ocr-worker.ps1`
+
+Start only the update worker container:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-update-worker.ps1`
+
+Current OCR worker container behavior:
+
+- consumes OCR jobs from SQS as a dedicated Python worker
+- downloads source manifests and `original.bin` from S3
+- calls the supervisor's OpenAI-compatible Hermes API to perform OCR and normalization
+- writes draft, approval, and OCR job state updates back to S3
+- pushes approval prompts back to LINE when OCR finishes successfully
+
+Current update worker behavior:
+
+- resolves `UPDATE_WORKER_*` environment variables through Docker Compose
+- consumes approved update jobs from SQS when `UPDATE_WORKER_QUEUE_URL` is configured
+- reads update job manifests from S3 and marks them `processing`, then `completed` or `failed`
+- POSTs approved payloads to `UPDATE_WORKER_TARGET_API_BASE_URL + /updates`
+- updates the related source message state from `approved` to `updating` and `updated` on success
+- remains an optional Compose profile so it does not affect the default supervisor stack until its queue and target API are configured
+
+## Local intake implementation slice
+
+The repo now includes a separate Python intake slice for the supervisor role at `hermes/supervisor/services/intake_server.py`.
+
+For local LINE webhook wiring, the repo also includes `hermes/supervisor/services/line_webhook_relay.py`.
+
+Current behavior in this slice:
+
+- accept LINE-style webhook payloads on `POST /line/events`
+- classify events into `image`, `approval_command`, `correction_command`, `text`, or unsupported
+- persist `source_message` manifests to a local filesystem state root
+- persist `source_message` manifests and derived indexes through the configured state backend
+- for image events, write local metadata that mirrors the planned S3 layout
+- when `LINE_CHANNEL_ACCESS_TOKEN` is available, fetch image content from LINE and persist `original.bin` through the configured upload backend
+- create event-level and message-level dedupe indexes
+- maintain a latest session pointer per LINE conversation
+- without a LINE token in the process environment, image metadata stays in `pending_line_content_fetch` as a fallback
+
+Run it locally from the repository root:
+
+- `python -m hermes.supervisor.intake_server`
+- the script preloads `hermes/supervisor/.env` by default; override with `--env-file <path>` when needed
+
+Run the local LINE relay from the repository root:
+
+- `python -m hermes.supervisor.line_webhook_relay`
+- or `powershell -ExecutionPolicy Bypass -File .\scripts\start-line-webhook-relay.ps1`
+
+Optional environment variables:
+
+- `SUPERVISOR_HOST`
+- `SUPERVISOR_PORT`
+- `SUPERVISOR_STATE_ROOT`
+- `SUPERVISOR_STORAGE_BACKEND`
+- `SUPERVISOR_RELAY_HOST`
+- `SUPERVISOR_RELAY_PORT`
+- `SUPERVISOR_HERMES_LINE_UPSTREAM_URL`
+- `SUPERVISOR_S3_BUCKET`
+- `SUPERVISOR_S3_REGION`
+- `SUPERVISOR_S3_ENDPOINT`
+- `SUPERVISOR_S3_PREFIX`
+
+Default local endpoints:
+
+- health: `GET http://127.0.0.1:8650/health`
+- intake: `POST http://127.0.0.1:8650/line/events`
+- relay health: `GET http://127.0.0.1:8646/line/webhook/health`
+- relay webhook: `POST http://127.0.0.1:8646/line/webhook`
+
+Scope note:
+
+- for local development, `line_webhook_relay.py` terminates the public LINE webhook path at the intake persistence slice and avoids forwarding webhook POSTs into Hermes directly
+- when `SUPERVISOR_STORAGE_BACKEND=local-mock`, this slice persists to local files as a stand-in for the S3 manifest layout
+- when `SUPERVISOR_STORAGE_BACKEND=s3`, the intake slice writes `source_message` manifests, derived indexes, `original.bin`, and `metadata.json` to S3 directly
 
 ## LINE webhook setup
 
@@ -113,6 +218,8 @@ These keep the LINE reply token available longer and align with Hermes' slow-res
 ## Useful commands
 
 - `docker compose --env-file hermes/supervisor/.env -f hermes/supervisor/docker-compose.yml up -d`
+- `docker compose --profile update-worker --env-file hermes/supervisor/.env -f hermes/supervisor/docker-compose.yml up -d update-worker`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-line-webhook-relay.ps1`
 - `docker compose --env-file hermes/supervisor/.env.ec2 -f hermes/supervisor/docker-compose.ec2.yml up -d`
 - `docker compose --env-file hermes/supervisor/.env -f hermes/supervisor/docker-compose.yml logs -f`
 - `docker exec hermes-supervisor hermes gateway status`
@@ -208,18 +315,22 @@ Notes:
 
 	`powershell -ExecutionPolicy Bypass -File .\scripts\start-hermes-supervisor.ps1`
 
-3. In a second terminal, start ngrok:
+3. In another terminal, start the LINE relay:
+
+	`powershell -ExecutionPolicy Bypass -File .\scripts\start-line-webhook-relay.ps1`
+
+4. In a third terminal, start ngrok:
 
 	`powershell -ExecutionPolicy Bypass -File .\scripts\start-line-ngrok-tunnel.ps1`
 
-4. ngrok will show a public HTTPS URL such as `https://abc123.ngrok-free.app`.
-5. Set `LINE_PUBLIC_URL` in `hermes/supervisor/.env` to that base URL.
-6. Register `https://abc123.ngrok-free.app/line/webhook` in the LINE Developers Console.
+5. ngrok will show a public HTTPS URL such as `https://abc123.ngrok-free.app`.
+6. Set `LINE_PUBLIC_URL` in `hermes/supervisor/.env` to that base URL.
+7. Register `https://abc123.ngrok-free.app/line/webhook` in the LINE Developers Console.
 
 Notes:
 
 - Free ngrok tunnels are temporary and the URL can change when you reconnect.
-- Keep the ngrok terminal open while testing.
+- Keep the relay and ngrok terminals open while testing.
 - Normal browser-style checks against free ngrok domains can hit `ERR_NGROK_6024`. LINE webhook delivery can still work, but if you want a quick health check from a browser or PowerShell, prefer `http://localhost:8646/line/webhook/health` locally.
 - If your ngrok plan supports reserved domains, you can request one with:
 
@@ -229,4 +340,4 @@ Notes:
 
 - Do not point any other Hermes container at `hermes/supervisor/runtime`.
 - The supervisor role is intentionally lightweight. It should receive events, validate, persist, dedupe, enqueue, and ask for approval. It should not run OCR inline.
-- This implementation does not yet include Line webhook adapters, database persistence, queue integration, or OCR/update workers.
+- This implementation now includes a local supervisor intake slice for persistence, dedupe, S3-backed OCR/update workflows, and dedicated OCR/update workers.

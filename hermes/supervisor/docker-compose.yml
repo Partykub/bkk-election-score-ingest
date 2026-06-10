@@ -31,3 +31,52 @@ services:
       LINE_ALLOW_ALL_USERS: ${LINE_ALLOW_ALL_USERS:-false}
       LINE_HOME_CHANNEL: ${LINE_HOME_CHANNEL:-}
       LINE_SLOW_RESPONSE_THRESHOLD: ${LINE_SLOW_RESPONSE_THRESHOLD:-45}
+
+  ocr-worker:
+    build:
+      context: ../..
+      dockerfile: hermes/ocr_worker/Dockerfile
+    image: supervisor-ocr-worker:latest
+    container_name: ${OCR_WORKER_CONTAINER_NAME:-ocr-worker}
+    restart: unless-stopped
+    command: python -m hermes.ocr_worker
+    depends_on:
+      hermes-supervisor:
+        condition: service_started
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-personal_hermes}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-replace-with-line-channel-access-token}
+      OCR_WORKER_HERMES_BASE_URL: ${OCR_WORKER_HERMES_BASE_URL:-http://hermes-supervisor:8642}
+      OCR_WORKER_HERMES_API_KEY: ${OCR_WORKER_HERMES_API_KEY:-change-this-api-key}
+      OCR_WORKER_HERMES_MODEL: ${OCR_WORKER_HERMES_MODEL:-hermes-agent}
+      OCR_WORKER_QUEUE_URL: ${OCR_WORKER_QUEUE_URL:-}
+      OCR_WORKER_AWS_REGION: ${OCR_WORKER_AWS_REGION:-ap-southeast-1}
+      OCR_WORKER_S3_BUCKET: ${OCR_WORKER_S3_BUCKET:-}
+      OCR_WORKER_S3_PREFIX: ${OCR_WORKER_S3_PREFIX:-}
+      OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT: ${OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT:-300}
+      OCR_WORKER_MODEL_NAME: ${OCR_WORKER_MODEL_NAME:-gemma4:26b}
+
+  update-worker:
+    profiles:
+      - update-worker
+    build:
+      context: ../..
+      dockerfile: hermes/update_worker/Dockerfile
+    image: supervisor-update-worker:latest
+    container_name: ${UPDATE_WORKER_CONTAINER_NAME:-update-worker}
+    restart: "no"
+    command: python -m hermes.update_worker
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-personal_hermes}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      UPDATE_WORKER_QUEUE_URL: ${UPDATE_WORKER_QUEUE_URL:-}
+      UPDATE_WORKER_AWS_REGION: ${UPDATE_WORKER_AWS_REGION:-ap-southeast-1}
+      UPDATE_WORKER_S3_BUCKET: ${UPDATE_WORKER_S3_BUCKET:-}
+      UPDATE_WORKER_S3_PREFIX: ${UPDATE_WORKER_S3_PREFIX:-}
+      UPDATE_WORKER_TARGET_API_BASE_URL: ${UPDATE_WORKER_TARGET_API_BASE_URL:-}
+      UPDATE_WORKER_QUEUE_VISIBILITY_TIMEOUT: ${UPDATE_WORKER_QUEUE_VISIBILITY_TIMEOUT:-300}
