@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -11,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib import error, request
+from urllib import error, parse, request
 
 import boto3
 
@@ -33,28 +35,38 @@ def stable_workflow_session_id(event: dict[str, Any]) -> str:
     return "line_unknown"
 
 
-APPROVAL_TEXTS = {"ยืนยัน", "เธขเธทเธเธขเธฑเธ"}
-CORRECTION_PREFIXES = ("แก้ไข", "เน\x81เธ\x81เน\x89เน\x84เธ\x82")
-REJECT_TEXTS = {"ไม่ถูกต้อง", "เน\x84เธกเน\x88เธ–เธนเธ\x81เธ•เน\x89เธญเธ\x87"}
-CORRECTION_HINT_KEYWORDS = ("แก้", "ก้ไข", "ไข", "เบอร์", "ผู้สมัคร", "คะแนน", "หาย", "ผิด")
+APPROVAL_TEXTS = {"ยืนยัน"}
+CORRECTION_PREFIXES = ("แก้ไข",)
+REJECT_TEXTS = {"ไม่ถูกต้อง"}
+CORRECTION_HINT_KEYWORDS = ("แก้", "แก้ไข", "ก้ไข", "เบอร์", "ผู้สมัคร", "คะแนน", "หาย", "ผิด", "=")
 APPROVAL_HINT_KEYWORDS = ("ยืนยัน", "ยัน", "ยืน", "รับรอง")
+CANCEL_TEXTS = {"ยกเลิก", "กลับ"}
+
+
+def normalize_command_text(text: str | None) -> str:
+    normalized = str(text or "").strip()
+    return normalized.strip("\"'“”‘’")
 
 
 def is_approval_text(text: str) -> bool:
-    return text.strip() in APPROVAL_TEXTS
+    return normalize_command_text(text) in APPROVAL_TEXTS
 
 
 def is_correction_text(text: str) -> bool:
-    normalized = text.strip()
+    normalized = normalize_command_text(text)
     return any(normalized.startswith(prefix) for prefix in CORRECTION_PREFIXES)
 
 
 def is_reject_text(text: str) -> bool:
-    return text.strip().lower() in {value.lower() for value in REJECT_TEXTS}
+    return normalize_command_text(text).lower() in {value.lower() for value in REJECT_TEXTS}
+
+
+def is_cancel_text(text: str | None) -> bool:
+    return normalize_command_text(text) in CANCEL_TEXTS
 
 
 def looks_like_correction_text(text: str | None) -> bool:
-    normalized = str(text or "").strip().lower()
+    normalized = normalize_command_text(text).lower()
     if not normalized:
         return False
     if is_correction_text(normalized):
@@ -63,7 +75,7 @@ def looks_like_correction_text(text: str | None) -> bool:
 
 
 def looks_like_approval_text(text: str | None) -> bool:
-    normalized = str(text or "").strip().lower()
+    normalized = normalize_command_text(text).lower()
     if not normalized:
         return False
     if is_approval_text(normalized):
@@ -168,11 +180,15 @@ class CandidateScoreOverride:
 
 
 def build_image_received_text() -> str:
-    return "รับรูปเรียบร้อยแล้ว กำลังตรวจข้อมูลจากภาพให้ครับ\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม"
+    return "รับรูปเรียบร้อยแล้ว\nกำลังตรวจข้อมูลจากภาพให้ครับ\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม"
 
 
 def build_correction_guidance_text() -> str:
-    return 'รับทราบว่าต้องการแก้ไขข้อมูล แต่ยังระบุค่าใหม่ไม่ครบ กรุณาพิมพ์ เช่น "แก้ไข ผู้สมัครเบอร์ 4 เป็น 14" หรือ "แก้ไข 4=14"'
+    return 'รับทราบว่าต้องการแก้ไขข้อมูล\nกรุณาพิมพ์รายละเอียดเพิ่ม เช่น "แก้ไข ผู้สมัครเบอร์ 4 เป็น 14" หรือ "แก้ไข 4=14"\nถ้าเข้าโหมดแก้ไขแล้ว จะพิมพ์สั้น ๆ เป็น "4=14" ได้เช่นกัน'
+
+
+def build_enter_correction_mode_text() -> str:
+    return 'เข้าสู่โหมดแก้ไขแล้ว\nพิมพ์รายละเอียด เช่น "แก้ไข 4=14" หรือ "4=14"\nหากไม่ต้องการแก้แล้ว พิมพ์ "ยกเลิก"'
 
 
 def build_approval_guidance_text() -> str:
@@ -183,8 +199,187 @@ def build_pending_approval_fallback_text() -> str:
     return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หรือหากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14"'
 
 
-def build_approval_success_text() -> str:
-    return "รับรองผลเรียบร้อยแล้ว\nบันทึกผลล่าสุดในระบบแล้ว"
+def build_general_help_text() -> str:
+    return 'ส่งรูปผลคะแนนมาได้เลย แล้วผมจะช่วยอ่านตัวเลขและส่งร่างให้ตรวจ\nถ้ายังไม่มีงานค้างอยู่ ตอนนี้คุยเล่น ทักทาย หรือถามวิธีใช้งานได้เหมือนกัน'
+
+
+def build_smalltalk_reply_text(text: str | None) -> str:
+    normalized = normalize_command_text(text).lower()
+    if not normalized:
+        return build_general_help_text()
+
+    greeting_keywords = ("สวัสดี", "หวัดดี", "ดีครับ", "ดีจ้า", "hello", "hi", "hey")
+    thanks_keywords = ("ขอบคุณ", "thank", "thx")
+    capability_keywords = ("ทำอะไรได้", "ช่วยอะไรได้", "ใช้งานยังไง", "ทำงานยังไง", "help")
+    status_keywords = ("เป็นไง", "เป็นยังไง", "สบายดี", "อยู่ไหม", "อยู่มั้ย")
+
+    if any(keyword in normalized for keyword in greeting_keywords):
+        return "สวัสดีครับ\nส่งรูปผลคะแนนมาได้เลย เดี๋ยวผมช่วยอ่านและจัดร่างให้ตรวจต่อ"
+    if any(keyword in normalized for keyword in thanks_keywords):
+        return "ยินดีครับ\nถ้ามีรูปผลคะแนนหรืออยากแก้ข้อมูลต่อ ส่งมาได้เลย"
+    if any(keyword in normalized for keyword in capability_keywords):
+        return 'ตอนนี้ผมช่วยได้หลัก ๆ คือรับรูป, อ่านคะแนน OCR, เปิดร่างให้ยืนยัน, และรับคำสั่งแก้ไข เช่น "แก้ไข 4=14"'
+    if any(keyword in normalized for keyword in status_keywords):
+        return "อยู่ครับ\nถ้าพร้อมแล้วส่งรูปผลคะแนนมาได้เลย หรือจะถามวิธีใช้งานต่อก็ได้"
+    return build_general_help_text()
+
+
+def build_free_chat_system_prompt() -> str:
+    return (
+        "You are a helpful Thai-speaking LINE assistant for election score intake.\n"
+        "You can chat naturally in Thai.\n"
+        "Keep replies concise, friendly, and practical.\n"
+        "Do not pretend to have completed OCR or approval actions unless the user explicitly asked and the workflow handled it.\n"
+        "If the user asks what you can do, mention receiving score photos, OCR draft review, approval, and corrections.\n"
+        "Prefer Thai in replies unless the user writes in another language."
+    )
+
+
+def build_candidate_score_lines(draft_manifest: dict[str, Any]) -> list[str]:
+    candidate_scores = normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+    lines: list[str] = []
+    for score in candidate_scores:
+        candidate_number = score.get("candidate_number")
+        candidate_value = score.get("score")
+        if candidate_number is None or candidate_value is None:
+            continue
+        lines.append(f"ผู้สมัคร {candidate_number}: {candidate_value}")
+    return lines
+
+
+def build_changed_candidate_score_lines(draft_manifest: dict[str, Any]) -> list[str]:
+    correction_payload = draft_manifest.get("correction_payload")
+    if not isinstance(correction_payload, dict):
+        return []
+    overrides = correction_payload.get("candidate_score_overrides")
+    if not isinstance(overrides, list):
+        return []
+
+    current_scores = {
+        score.get("candidate_number"): score.get("score")
+        for score in normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+        if score.get("candidate_number") is not None and score.get("score") is not None
+    }
+    lines: list[str] = []
+    for item in overrides:
+        if not isinstance(item, dict):
+            continue
+        candidate_number = item.get("candidate_number")
+        score = item.get("score")
+        try:
+            candidate_number = int(candidate_number)
+            score = int(score)
+        except (TypeError, ValueError):
+            continue
+        current_score = current_scores.get(candidate_number, score)
+        lines.append(f"ผู้สมัคร {candidate_number}: {current_score}")
+    return lines
+
+
+def build_approval_success_text(draft_manifest: dict[str, Any] | None = None) -> str:
+    lines = ["รับรองผลเรียบร้อยแล้ว", "บันทึกผลล่าสุดในระบบแล้ว"]
+    if isinstance(draft_manifest, dict):
+        revision = int(draft_manifest.get("revision") or 1)
+        lines.append(f"ผลร่างล่าสุด: ครั้งที่ {revision}")
+        changed_lines = build_changed_candidate_score_lines(draft_manifest)
+        if changed_lines:
+            lines.append("รายการที่แก้ไข:")
+            lines.extend(changed_lines)
+        else:
+            lines.extend(build_candidate_score_lines(draft_manifest))
+    return "\n".join(lines)
+
+
+def build_correction_received_text(draft_manifest: dict[str, Any] | None = None) -> str:
+    if isinstance(draft_manifest, dict):
+        revision = int(draft_manifest.get("revision") or 1)
+        changed_lines = build_changed_candidate_score_lines(draft_manifest)
+        lines = ["รับการแก้ไขแล้ว"]
+        if changed_lines:
+            lines.append("รายการที่แก้ไข:")
+            lines.extend(changed_lines)
+        lines.append(f"กำลังส่งร่างครั้งที่ {revision} ให้ตรวจอีกครั้ง")
+        return "\n".join(lines)
+    return "รับการแก้ไขแล้ว\nกำลังส่งร่างฉบับใหม่ให้ตรวจอีกครั้ง"
+
+
+def build_correction_cancelled_text() -> str:
+    return 'ยกเลิกโหมดแก้ไขแล้ว\nหากต้องการรับรองให้ตอบ "ยืนยัน" หรือหากต้องการแก้ไขให้เริ่มใหม่ด้วย "แก้ไข"'
+
+
+def build_post_approval_approval_text() -> str:
+    return "ร่างนี้ถูกรับรองแล้ว ไม่ต้องยืนยันซ้ำ"
+
+
+def build_post_approval_correction_text() -> str:
+    return "ร่างนี้ถูกรับรองแล้วและปิดรอบตรวจแล้ว\nหากต้องการแก้เพิ่มเติม กรุณาส่งรูปใหม่หรือเปิดรอบแก้ไขใหม่"
+
+
+def build_line_text_message(text: str) -> dict[str, Any]:
+    return {"type": "text", "text": text[:5000]}
+
+
+def correction_form_secret() -> str:
+    return (
+        os.environ.get("SUPERVISOR_CORRECTION_FORM_SECRET", "").strip()
+        or os.environ.get("LINE_CHANNEL_SECRET", "").strip()
+        or "change-this-correction-form-secret"
+    )
+
+
+def build_correction_form_token(*, source_message_id: str, approval_id: str) -> str:
+    payload = f"{source_message_id}:{approval_id}".encode("utf-8")
+    return hmac.new(correction_form_secret().encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def build_correction_form_url(*, source_message_id: str, approval_id: str) -> str | None:
+    public_url = os.environ.get("LINE_PUBLIC_URL", "").strip().rstrip("/")
+    if not public_url:
+        return None
+    query = parse.urlencode(
+        {
+            "source_message_id": source_message_id,
+            "approval_id": approval_id,
+            "token": build_correction_form_token(source_message_id=source_message_id, approval_id=approval_id),
+        }
+    )
+    return f"{public_url}/line/liff/correction?{query}"
+
+
+def build_line_correction_liff_url() -> str | None:
+    liff_id = os.environ.get("LINE_LIFF_CORRECTION_ID", "").strip()
+    if not liff_id:
+        return None
+    return f"https://liff.line.me/{liff_id}"
+
+
+def build_approval_quick_reply_items(*, correction_url: str | None = None) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
+        },
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
+        },
+    ]
+
+
+def build_approval_action_messages(text: str, *, correction_url: str | None = None) -> list[dict[str, Any]]:
+    message = build_line_text_message(text)
+    message["quickReply"] = {"items": build_approval_quick_reply_items(correction_url=correction_url)}
+    return [message]
+
+
+def build_correction_form_url_for_source_manifest(source_manifest: dict[str, Any]) -> str | None:
+    source_message_id = str(source_manifest.get("source_message_id") or "").strip()
+    approval_id = str(source_manifest.get("current_approval_id") or "").strip()
+    if not source_message_id or not approval_id:
+        return None
+    return build_correction_form_url(source_message_id=source_message_id, approval_id=approval_id)
 
 
 def draft_revision_path(source_message_id: str, revision: int) -> str:
@@ -224,7 +419,9 @@ def parse_candidate_score_overrides(source_text: str | None) -> list[CandidateSc
     if not source_text:
         return []
 
-    normalized_text = re.sub(r"^\S+\s*", "", source_text.strip(), count=1)
+    normalized_text = source_text.strip()
+    if is_correction_text(normalized_text):
+        normalized_text = re.sub(r"^\S+\s*", "", normalized_text, count=1)
     if not normalized_text:
         return []
 
@@ -242,6 +439,15 @@ def parse_candidate_score_overrides(source_text: str | None) -> list[CandidateSc
         overrides.append(CandidateScoreOverride(candidate_number=candidate_number, score=score))
         seen_candidate_numbers.add(candidate_number)
     return overrides
+
+
+def looks_like_raw_correction_override(text: str | None) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    if is_correction_text(normalized):
+        return False
+    return bool(re.search(r"\b\d+\s*(?:=|เป็น|คือ|ควรเป็น)\s*\d[\d,]*\b", normalized, re.IGNORECASE))
 
 
 def infer_draft_revision(draft_manifest: dict[str, Any], fallback_revision: int = 1) -> int:
@@ -305,17 +511,12 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
 
     if candidate_scores:
         lines.append("คะแนนที่อ่านได้:")
-        for score in candidate_scores:
-            candidate_number = score.get("candidate_number")
-            candidate_value = score.get("score")
-            if candidate_number is None or candidate_value is None:
-                continue
-            lines.append(f"ผู้สมัคร {candidate_number}: {candidate_value}")
+        lines.extend(build_candidate_score_lines(draft_manifest))
     else:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
-    lines.append("ตอบ 'แก้ไข <รายละเอียด>' หากต้องการแก้ข้อมูล")
+    lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
     return "\n".join(lines)
 
 
@@ -323,16 +524,18 @@ def send_line_push_message(
     *,
     channel_access_token: str,
     destination_id: str,
-    text: str,
+    text: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
     api_base_url: str = "https://api.line.me",
     opener: Any = request.urlopen,
 ) -> None:
+    payload_messages = messages or [build_line_text_message(text or "")]
     line_request = request.Request(
         f"{api_base_url.rstrip('/')}/v2/bot/message/push",
         data=json.dumps(
             {
                 "to": destination_id,
-                "messages": [{"type": "text", "text": text[:5000]}],
+                "messages": payload_messages,
             },
             ensure_ascii=False,
         ).encode("utf-8"),
@@ -356,16 +559,18 @@ def send_line_reply_message(
     *,
     channel_access_token: str,
     reply_token: str,
-    text: str,
+    text: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
     api_base_url: str = "https://api.line.me",
     opener: Any = request.urlopen,
 ) -> None:
+    payload_messages = messages or [build_line_text_message(text or "")]
     line_request = request.Request(
         f"{api_base_url.rstrip('/')}/v2/bot/message/reply",
         data=json.dumps(
             {
                 "replyToken": reply_token,
-                "messages": [{"type": "text", "text": text[:5000]}],
+                "messages": payload_messages,
             },
             ensure_ascii=False,
         ).encode("utf-8"),
@@ -392,11 +597,12 @@ def build_line_reply_sender_from_env(opener: Any = request.urlopen) -> Any | Non
 
     api_base_url = os.environ.get("LINE_API_BASE_URL", "https://api.line.me").strip() or "https://api.line.me"
 
-    def send_reply(*, reply_token: str, text: str) -> None:
+    def send_reply(*, reply_token: str, text: str | None = None, messages: list[dict[str, Any]] | None = None) -> None:
         send_line_reply_message(
             channel_access_token=channel_access_token,
             reply_token=reply_token,
             text=text,
+            messages=messages,
             api_base_url=api_base_url,
             opener=opener,
         )
@@ -411,11 +617,12 @@ def build_line_push_sender_from_env(opener: Any = request.urlopen) -> Any | None
 
     api_base_url = os.environ.get("LINE_API_BASE_URL", "https://api.line.me").strip() or "https://api.line.me"
 
-    def send_push(*, destination_id: str, text: str) -> None:
+    def send_push(*, destination_id: str, text: str | None = None, messages: list[dict[str, Any]] | None = None) -> None:
         send_line_push_message(
             channel_access_token=channel_access_token,
             destination_id=destination_id,
             text=text,
+            messages=messages,
             api_base_url=api_base_url,
             opener=opener,
         )
@@ -606,6 +813,65 @@ def build_update_job_queue() -> SqsUpdateJobQueue | None:
     return SqsUpdateJobQueue(queue_url=queue_url, region_name=region_name)
 
 
+def build_supervisor_chat_client_from_env(opener: Any = request.urlopen) -> Any | None:
+    base_url = (
+        os.environ.get("SUPERVISOR_CHAT_HERMES_BASE_URL", "").strip()
+        or os.environ.get("OCR_WORKER_HERMES_BASE_URL", "").strip()
+    )
+    api_key = (
+        os.environ.get("SUPERVISOR_CHAT_HERMES_API_KEY", "").strip()
+        or os.environ.get("OCR_WORKER_HERMES_API_KEY", "").strip()
+    )
+    model = (
+        os.environ.get("SUPERVISOR_CHAT_HERMES_MODEL", "").strip()
+        or os.environ.get("OCR_WORKER_HERMES_MODEL", "").strip()
+        or "hermes-agent"
+    )
+    if not base_url or not api_key or api_key == "change-this-api-key":
+        return None
+
+    def send_chat(*, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        payload = {"model": model, "messages": messages}
+        req = request.Request(
+            f"{base_url.rstrip('/')}/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with opener(req, timeout=45) as response:
+                raw_body = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "ignore")
+            raise RuntimeError(f"Hermes chat request failed with status {exc.code}: {body}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"Hermes chat request failed: {exc}") from exc
+        return json.loads(raw_body)
+
+    return send_chat
+
+
+def extract_chat_assistant_text(response_payload: dict[str, Any]) -> str:
+    choices = response_payload.get("choices") or []
+    if not choices:
+        raise ValueError("Hermes chat response did not contain any choices")
+
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                chunks.append(str(item.get("text") or ""))
+        return "\n".join(chunk for chunk in chunks if chunk).strip()
+    raise ValueError("Hermes chat response content was empty")
+
+
 class LocalStateStore:
     def __init__(
         self,
@@ -617,6 +883,7 @@ class LocalStateStore:
         update_job_queue: SqsUpdateJobQueue | None = None,
         line_reply_sender: Any | None = None,
         line_push_sender: Any | None = None,
+        chat_completion_client: Any | None = None,
     ):
         self.root_path = Path(root_path)
         self.state_backend = state_backend or build_state_backend(self.root_path)
@@ -625,6 +892,7 @@ class LocalStateStore:
         self.update_job_queue = update_job_queue or build_update_job_queue()
         self.line_reply_sender = line_reply_sender or build_line_reply_sender_from_env()
         self.line_push_sender = line_push_sender or build_line_push_sender_from_env()
+        self.chat_completion_client = chat_completion_client or build_supervisor_chat_client_from_env()
 
     def _write_json(self, relative_path: str, payload: dict[str, Any]) -> str:
         return self.state_backend.write_json(relative_path, payload)
@@ -753,6 +1021,16 @@ class LocalStateStore:
         approval_manifest = self._read_json(self._normalize_state_path(approval_key))
         return target_source_message_id, target_source_manifest, approval_key, approval_manifest
 
+    @staticmethod
+    def _pending_user_action(source_manifest: dict[str, Any] | None) -> str | None:
+        if not isinstance(source_manifest, dict):
+            return None
+        value = str(source_manifest.get("pending_user_action") or "").strip()
+        return value or None
+
+    def _source_waits_correction_input(self, source_manifest: dict[str, Any] | None) -> bool:
+        return self._pending_user_action(source_manifest) == "awaiting_correction_input"
+
     def _build_update_job_manifest(
         self,
         *,
@@ -878,7 +1156,11 @@ class LocalStateStore:
             return
 
         try:
-            self.line_push_sender(destination_id=destination_id, text=build_approval_prompt_text(draft_manifest))
+            correction_url = build_correction_form_url_for_source_manifest(source_manifest)
+            self.line_push_sender(
+                destination_id=destination_id,
+                messages=build_approval_action_messages(build_approval_prompt_text(draft_manifest), correction_url=correction_url),
+            )
             self._update_approval_prompt_status(
                 source_manifest=source_manifest,
                 draft_manifest=draft_manifest,
@@ -896,7 +1178,7 @@ class LocalStateStore:
                 error_message=str(exc),
             )
 
-    def _reply_text(self, manifest: dict[str, Any], text: str) -> None:
+    def _reply_text(self, manifest: dict[str, Any], text: str, *, messages: list[dict[str, Any]] | None = None) -> None:
         if self.line_reply_sender is None:
             return
 
@@ -905,13 +1187,52 @@ class LocalStateStore:
             return
 
         try:
-            self.line_reply_sender(reply_token=reply_token, text=text)
+            self.line_reply_sender(reply_token=reply_token, text=text, messages=messages)
         except Exception as exc:
             print(f"line intake: unable to send text reply: {exc}", file=sys.stderr)
 
+    def _build_free_chat_messages(self, user_text: str, *, workflow_session_id: str) -> list[dict[str, Any]]:
+        return [
+            {"role": "system", "content": build_free_chat_system_prompt()},
+            {
+                "role": "user",
+                "content": (
+                    f"session_id={workflow_session_id}\n"
+                    f"user_message={user_text}"
+                ),
+            },
+        ]
+
+    def _reply_free_chat_text(self, manifest: dict[str, Any]) -> bool:
+        source_text = normalize_command_text(manifest.get("source_text"))
+        if not source_text:
+            return False
+        if self.chat_completion_client is None:
+            return False
+
+        workflow_session_id = str(manifest.get("workflow_session_id") or "").strip() or "line_unknown"
+        try:
+            response_payload = self.chat_completion_client(
+                messages=self._build_free_chat_messages(source_text, workflow_session_id=workflow_session_id)
+            )
+            assistant_text = extract_chat_assistant_text(response_payload)
+        except Exception as exc:
+            print(f"line intake: unable to generate free chat response: {exc}", file=sys.stderr)
+            return False
+
+        if not assistant_text:
+            return False
+        self._reply_text(manifest, assistant_text[:5000])
+        return True
+
     def _reply_text_for_active_approval(self, manifest: dict[str, Any]) -> None:
         source_type = str(manifest.get("source_type") or "").strip()
-        if source_type not in {"text", "correction_command"}:
+        if source_type not in {"text", "correction_command", "approval_command"}:
+            return
+        if manifest.get("correction_cancelled"):
+            self._reply_text(manifest, build_correction_cancelled_text())
+            return
+        if manifest.get("approval_action") in {"approve", "correct", "reject"} and manifest.get("exception") is None:
             return
 
         workflow_session_id = str(manifest.get("workflow_session_id") or "").strip()
@@ -919,15 +1240,38 @@ class LocalStateStore:
             return
 
         target_source_message_id, target_source_manifest, _, approval_manifest = self._resolve_active_approval(workflow_session_id)
+        if source_type == "text" and (target_source_manifest is None or approval_manifest is None or not target_source_message_id):
+            if not self._reply_free_chat_text(manifest):
+                self._reply_text(manifest, build_smalltalk_reply_text(manifest.get("source_text")))
+            return
         if target_source_manifest is None or approval_manifest is None or not target_source_message_id:
             return
         if target_source_message_id == manifest.get("source_message_id"):
             return
-        if approval_manifest.get("state") != "awaiting_approval":
-            return
-
         source_text = str(manifest.get("source_text") or "").strip()
         if not source_text:
+            return
+
+        if approval_manifest.get("state") != "awaiting_approval":
+            if source_type == "approval_command" or is_approval_text(source_text):
+                self._reply_text(manifest, build_post_approval_approval_text())
+            elif source_type == "correction_command" or looks_like_correction_text(source_text):
+                self._reply_text(manifest, build_post_approval_correction_text())
+            elif source_type == "text":
+                if not self._reply_free_chat_text(manifest):
+                    self._reply_text(manifest, build_smalltalk_reply_text(source_text))
+            return
+
+        if is_cancel_text(source_text) and self._source_waits_correction_input(target_source_manifest):
+            self._reply_text(manifest, build_correction_cancelled_text())
+            return
+
+        if source_type == "correction_command" and normalize_command_text(source_text) == "แก้ไข":
+            self._reply_text(manifest, build_enter_correction_mode_text())
+            return
+
+        if self._source_waits_correction_input(target_source_manifest):
+            self._reply_text(manifest, build_correction_guidance_text())
             return
 
         if source_type == "correction_command" and (manifest.get("exception") or {}).get("code") == "CORRECTION_PARSE_FAILED":
@@ -941,6 +1285,18 @@ class LocalStateStore:
                 self._reply_text(manifest, build_correction_guidance_text())
             else:
                 self._reply_text(manifest, build_pending_approval_fallback_text())
+
+    def _load_target_draft_manifest(self, manifest: dict[str, Any]) -> dict[str, Any] | None:
+        target_source_message_id = str(manifest.get("target_source_message_id") or "").strip()
+        if not target_source_message_id:
+            return None
+        target_source_manifest = self.read_manifest(target_source_message_id)
+        if target_source_manifest is None:
+            return None
+        draft_key = str(target_source_manifest.get("current_draft_key") or "").strip()
+        if not draft_key:
+            return None
+        return self._read_json(self._normalize_state_path(draft_key))
 
     def _build_approval_documents(
         self,
@@ -1126,6 +1482,9 @@ class LocalStateStore:
         if action == "correct":
             candidate_score_overrides = parse_candidate_score_overrides(source_text)
             if not candidate_score_overrides:
+                target_source_manifest["pending_user_action"] = "awaiting_correction_input"
+                target_source_manifest["updated_at"] = timestamp
+                self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
                 manifest["state"] = "exception"
                 manifest["exception"] = {
                     "code": "CORRECTION_PARSE_FAILED",
@@ -1168,6 +1527,7 @@ class LocalStateStore:
         target_source_manifest["state"] = new_approval_state
         target_source_manifest["current_approval_id"] = approval_manifest["approval_id"]
         target_source_manifest["current_approval_key"] = approval_key
+        target_source_manifest["pending_user_action"] = None
         target_source_manifest["updated_at"] = timestamp
 
         update_job_id = None
@@ -1227,6 +1587,7 @@ class LocalStateStore:
             target_source_manifest["current_update_job_id"] = None
             target_source_manifest["current_update_job_key"] = None
             target_source_manifest["exception"] = None
+            target_source_manifest["pending_user_action"] = None
             self._send_approval_prompt_for_draft(
                 source_manifest=target_source_manifest,
                 draft_manifest=corrected_draft,
@@ -1269,16 +1630,38 @@ class LocalStateStore:
         if not reply_token:
             return
 
-        if manifest.get("source_type") != "approval_command":
+        if manifest.get("approval_action") != "approve":
             return
 
         if manifest.get("state") != "approved":
             return
 
         try:
-            self.line_reply_sender(reply_token=reply_token, text=build_approval_success_text())
+            self.line_reply_sender(reply_token=reply_token, text=build_approval_success_text(self._load_target_draft_manifest(manifest)))
         except Exception as exc:
             print(f"line intake: unable to send approval acknowledgment: {exc}", file=sys.stderr)
+
+    def _maybe_send_correction_acknowledgment(self, manifest: dict[str, Any]) -> None:
+        if self.line_reply_sender is None:
+            return
+
+        reply_token = str(manifest.get("line_reply_token") or "").strip()
+        if not reply_token:
+            return
+
+        if manifest.get("approval_action") != "correct":
+            return
+
+        if manifest.get("state") != "awaiting_approval":
+            return
+
+        if manifest.get("exception") is not None:
+            return
+
+        try:
+            self.line_reply_sender(reply_token=reply_token, text=build_correction_received_text(self._load_target_draft_manifest(manifest)))
+        except Exception as exc:
+            print(f"line intake: unable to send correction acknowledgment: {exc}", file=sys.stderr)
 
     def persist_line_event(self, event: dict[str, Any], received_at: str | None = None) -> ProcessedEvent:
         line_event_id = event.get("webhookEventId") or "unknown-event"
@@ -1363,6 +1746,35 @@ class LocalStateStore:
                 sender_user_id=source.get("userId"),
                 timestamp=timestamp,
             )
+        elif source_type == "text":
+            target_source_message_id, target_source_manifest, _, approval_manifest = self._resolve_active_approval(workflow_session_id)
+            if target_source_message_id and target_source_manifest is not None and approval_manifest is not None:
+                if approval_manifest.get("state") == "awaiting_approval" and is_cancel_text(source_text) and self._source_waits_correction_input(target_source_manifest):
+                    target_source_manifest["pending_user_action"] = None
+                    target_source_manifest["updated_at"] = timestamp
+                    self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
+                    manifest["correction_cancelled"] = True
+                    session_pointer_source_message_id = target_source_message_id
+                elif approval_manifest.get("state") == "awaiting_approval" and (
+                    is_approval_text(source_text)
+                    or is_reject_text(source_text)
+                    or self._source_waits_correction_input(target_source_manifest)
+                    or is_correction_text(source_text)
+                    or looks_like_raw_correction_override(source_text)
+                ):
+                    effective_source_type = "correction_command" if (
+                        self._source_waits_correction_input(target_source_manifest)
+                        or is_correction_text(source_text)
+                        or looks_like_raw_correction_override(source_text)
+                    ) else "text"
+                    manifest["state"], session_pointer_source_message_id = self._apply_approval_response(
+                        manifest=manifest,
+                        workflow_session_id=workflow_session_id,
+                        source_type=effective_source_type,
+                        source_text=source_text,
+                        sender_user_id=source.get("userId"),
+                        timestamp=timestamp,
+                    )
         event_index = {
             "line_event_id": line_event_id,
             "source_message_id": source_message_id,
@@ -1391,6 +1803,7 @@ class LocalStateStore:
         self._write_json(self.session_pointer_path(workflow_session_id), session_pointer)
         self._maybe_send_image_acknowledgment(manifest)
         self._maybe_send_approval_acknowledgment(manifest)
+        self._maybe_send_correction_acknowledgment(manifest)
         self._reply_text_for_active_approval(manifest)
 
         return ProcessedEvent(

@@ -14,6 +14,8 @@ from urllib import error, request
 
 import boto3
 
+from hermes.supervisor.intake_server import build_correction_form_url_for_source_manifest
+
 
 @dataclass(frozen=True)
 class WorkerConfig:
@@ -438,24 +440,58 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
-    lines.append("ตอบ 'แก้ไข <รายละเอียด>' หากต้องการแก้ข้อมูล")
+    lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
     return "\n".join(lines)
+
+
+def build_line_text_message(text: str) -> dict[str, Any]:
+    return {"type": "text", "text": text[:5000]}
+
+
+def build_line_correction_liff_url() -> str | None:
+    liff_id = os.environ.get("LINE_LIFF_CORRECTION_ID", "").strip()
+    if not liff_id:
+        return None
+    return f"https://liff.line.me/{liff_id}"
+
+
+def build_approval_quick_reply_items(*, correction_url: str | None = None) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
+        },
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
+        },
+    ]
+
+
+def build_approval_action_messages(text: str, *, correction_url: str | None = None) -> list[dict[str, Any]]:
+    message = build_line_text_message(text)
+    message["quickReply"] = {"items": build_approval_quick_reply_items(correction_url=correction_url)}
+    return [message]
 
 
 def send_line_push_message(
     *,
     channel_access_token: str,
     destination_id: str,
-    text: str,
+    text: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
     api_base_url: str = "https://api.line.me",
     opener: Any = request.urlopen,
 ) -> None:
+    payload_messages = messages or [build_line_text_message(text or "")]
     line_request = request.Request(
         f"{api_base_url.rstrip('/')}/v2/bot/message/push",
         data=json.dumps(
             {
                 "to": destination_id,
-                "messages": [{"type": "text", "text": text[:5000]}],
+                "messages": payload_messages,
             },
             ensure_ascii=False,
         ).encode("utf-8"),
@@ -515,10 +551,11 @@ def maybe_send_approval_prompt(
         return source_manifest["approval_prompt"]
 
     try:
+        correction_url = build_correction_form_url_for_source_manifest(source_manifest)
         send_line_push_message(
             channel_access_token=config.line_channel_access_token,
             destination_id=destination_id,
-            text=build_approval_prompt_text(draft_manifest),
+            messages=build_approval_action_messages(build_approval_prompt_text(draft_manifest), correction_url=correction_url),
             api_base_url=config.line_api_base_url,
             opener=opener,
         )

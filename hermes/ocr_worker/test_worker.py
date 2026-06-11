@@ -359,6 +359,29 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(payload["to"], "U123")
         self.assertEqual(payload["messages"][0]["text"], "พร้อมตรวจร่าง")
 
+    def test_send_line_push_message_includes_multiple_messages_when_requested(self):
+        opener = _RecordingUrlOpen()
+
+        send_line_push_message(
+            channel_access_token="line-channel-token",
+            destination_id="U123",
+            messages=[
+                {
+                    "type": "text",
+                    "text": "พร้อมตรวจร่าง",
+                    "quickReply": {
+                        "items": [
+                            {"type": "action", "imageUrl": None, "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"}}
+                        ]
+                    },
+                },
+            ],
+            opener=opener,
+        )
+
+        payload = json.loads(opener.requests[0]["body"].decode("utf-8"))
+        self.assertEqual(payload["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
+
     def test_maybe_send_approval_prompt_updates_source_manifest_after_push(self):
         source_manifest_path = "api-data/score/manifests/source-messages/src_20260609_0004.json"
         source_manifest = {
@@ -394,6 +417,8 @@ class WorkerProcessingTests(unittest.TestCase):
         updated_manifest = json.loads(s3_client.objects[("bucket-a", source_manifest_path)].decode("utf-8"))
         self.assertEqual(updated_manifest["approval_prompt"]["status"], "sent")
         self.assertEqual(updated_manifest["approval_prompt"]["draft_id"], "draft_src_20260609_0004_r1")
+        payload = json.loads(opener.requests[0]["body"].decode("utf-8"))
+        self.assertEqual(payload["messages"][0]["quickReply"]["items"][1]["action"]["text"], "แก้ไข")
 
     def test_build_runtime_config_log_redacts_secrets(self):
         payload = build_runtime_config_log(self.config)
@@ -567,6 +592,44 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(updated_source_manifest["state"], "awaiting_approval")
         self.assertEqual(updated_source_manifest["current_approval_id"], "approval_src_20260609_0007_r1")
         self.assertIn(("bucket-a", "api-data/score/approvals/src_20260609_0007/latest.json"), s3_client.objects)
+
+
+    def test_maybe_send_approval_prompt_uses_message_action(self):
+        source_manifest_path = "api-data/score/manifests/source-messages/src_20260609_0004.json"
+        source_manifest = {
+            "source_message_id": "src_20260609_0004",
+            "sender_user_id": "U123",
+            "sender_group_id": None,
+            "sender_room_id": None,
+        }
+        s3_client = _FakeS3Client({("bucket-a", source_manifest_path): json.dumps(source_manifest).encode("utf-8")})
+        opener = _RecordingUrlOpen()
+        draft_manifest = {
+            "draft_id": "draft_src_20260609_0004_r1",
+            "revision": 1,
+            "report_type": "election_score_sheet",
+            "area_id": "401",
+            "overall_confidence": 0.95,
+            "validation_flags": [],
+            "candidate_scores": [{"candidate_number": 1, "score": 120}],
+        }
+
+        result = maybe_send_approval_prompt(
+            s3_client=s3_client,
+            bucket="bucket-a",
+            source_manifest_path=source_manifest_path,
+            source_manifest=source_manifest,
+            draft_manifest=draft_manifest,
+            config=self.config,
+            timestamp="2026-06-09T10:00:00Z",
+            opener=opener,
+        )
+
+        self.assertEqual(result["status"], "sent")
+        payload = json.loads(opener.requests[0]["body"].decode("utf-8"))
+        correction_action = payload["messages"][0]["quickReply"]["items"][1]["action"]
+        self.assertEqual(correction_action["type"], "message")
+        self.assertEqual(correction_action["text"], "แก้ไข")
 
 
 if __name__ == "__main__":

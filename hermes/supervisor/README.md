@@ -237,6 +237,7 @@ Approval and correction behavior:
 
 - `ยืนยัน` approves the current draft revision and sends a success reply back to LINE
 - `แก้ไข ...` creates a corrected draft revision and sends a fresh approval prompt
+- when `LINE_LIFF_CORRECTION_ID` is configured, the correction button opens a LIFF form that submits a correction command back into the same chat
 - ambiguous correction text receives a guidance reply instead of silently doing nothing
 - approval-like typos such as `ยันยืน` receive a reply telling the user to send `ยืนยัน` exactly
 
@@ -255,11 +256,13 @@ Required routing values:
 
 - At least one allowlist: `LINE_ALLOWED_USERS`, `LINE_ALLOWED_GROUPS`, `LINE_ALLOWED_ROOMS`, or `LINE_ALLOW_ALL_USERS=true` for development only
 - `LINE_PUBLIC_URL` pointing at your public HTTPS base URL
+- `LINE_LIFF_CORRECTION_ID` when you want the `แก้ไข` button to open a correction form
 
 Webhook details:
 
 - Health check: `https://<your-public-url>/line/webhook/health`
 - Webhook URL to register in LINE Developers Console: `https://<your-public-url>/line/webhook`
+- LIFF endpoint to register in LINE Developers Console: `https://<your-public-url>/line/liff/correction`
 - Container bind port: `8646` by default
 
 Behavior choices already set in `config.yaml` for LINE:

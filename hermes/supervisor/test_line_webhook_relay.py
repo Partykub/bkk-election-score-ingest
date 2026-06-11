@@ -1,16 +1,19 @@
 import json
 import threading
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 
+from hermes.supervisor.intake_server import build_correction_form_token
 from hermes.supervisor.line_webhook_relay import make_handler
 
 
 class _RecordingStore:
     def __init__(self) -> None:
         self.events = []
+        self.manifests = {}
 
     def persist_line_event(self, event, received_at=None):
         self.events.append(event)
@@ -21,6 +24,9 @@ class _RecordingStore:
             deduplicated=False,
             source_type=((event.get("message") or {}).get("type") or event.get("type") or "unknown"),
         )
+
+    def read_manifest(self, source_message_id):
+        return self.manifests.get(source_message_id)
 
 
 class _RecordingProxyClient:
@@ -91,6 +97,42 @@ class LineWebhookRelayTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(self.proxy_client.requests[0]["url"], "http://127.0.0.1:8647/line/webhook/health")
         self.assertEqual(len(self.store.events), 0)
+
+    def test_get_correction_liff_page_returns_html(self) -> None:
+        token = build_correction_form_token(source_message_id="src_01JXIMAGE001", approval_id="approval_src_01JXIMAGE001_r1")
+        with mock.patch.dict("os.environ", {"LINE_LIFF_CORRECTION_ID": "123456-test"}, clear=False):
+            response = self._request(
+                method="GET",
+                path=f"/line/liff/correction?source_message_id=src_01JXIMAGE001&approval_id=approval_src_01JXIMAGE001_r1&token={token}",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(len(self.proxy_client.requests), 0)
+        body = response["body"].decode("utf-8")
+        self.assertIn("<form id=\"correction-form\">", body)
+        self.assertIn('const correctionLiffId = "123456-test";', body)
+        self.assertIn("liff.sendMessages", body)
+
+    def test_post_correction_form_creates_synthetic_correction_event(self) -> None:
+        self.store.manifests["src_01JXIMAGE001"] = {
+            "source_message_id": "src_01JXIMAGE001",
+            "current_approval_id": "approval_src_01JXIMAGE001_r1",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "sender_group_id": "C123",
+        }
+        token = build_correction_form_token(source_message_id="src_01JXIMAGE001", approval_id="approval_src_01JXIMAGE001_r1")
+        response = self._request(
+            method="POST",
+            path="/line/liff/correction/submit",
+            body=f"source_message_id=src_01JXIMAGE001&approval_id=approval_src_01JXIMAGE001_r1&token={token}&candidate_number=4&score=14".encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(len(self.store.events), 1)
+        self.assertEqual(self.store.events[0]["message"]["text"], "แก้ไข 4=14")
+        self.assertEqual(self.store.events[0]["source"]["groupId"], "C123")
 
     def _request(self, *, method: str, path: str, body: bytes | None = None, headers: dict[str, str] | None = None):
         connection = HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)

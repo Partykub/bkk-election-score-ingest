@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from hermes.supervisor.intake_server import LocalStateStore, S3JsonStateBackend
@@ -40,16 +41,29 @@ class _RecordingReplySender:
     def __init__(self) -> None:
         self.messages = []
 
-    def __call__(self, *, reply_token: str, text: str) -> None:
-        self.messages.append({"reply_token": reply_token, "text": text})
+    def __call__(self, *, reply_token: str, text=None, messages=None) -> None:
+        self.messages.append({"reply_token": reply_token, "text": text, "messages": messages})
 
 
 class _RecordingPushSender:
     def __init__(self) -> None:
         self.messages = []
 
-    def __call__(self, *, destination_id: str, text: str) -> None:
-        self.messages.append({"destination_id": destination_id, "text": text})
+    def __call__(self, *, destination_id: str, text=None, messages=None) -> None:
+        self.messages.append({"destination_id": destination_id, "text": text, "messages": messages})
+
+
+class _RecordingChatClient:
+    def __init__(self, response_text: str = "สวัสดีจากแชตบอท", *, should_fail: bool = False) -> None:
+        self.response_text = response_text
+        self.should_fail = should_fail
+        self.calls = []
+
+    def __call__(self, *, messages) -> dict:
+        self.calls.append(messages)
+        if self.should_fail:
+            raise RuntimeError("chat backend unavailable")
+        return {"choices": [{"message": {"content": self.response_text}}]}
 
 
 from hermes.supervisor.intake_server import LocalStateStore, S3JsonStateBackend, SqsOcrJobQueue, SqsUpdateJobQueue
@@ -242,6 +256,9 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(queue_payload["manifest_key"], "dev/updates/jobs/upd_approval_src_01JXIMAGE777_r1.json")
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("รับรองผลเรียบร้อยแล้ว", reply_sender.messages[0]["text"])
+        self.assertIn("ผลร่างล่าสุด: ครั้งที่ 1", reply_sender.messages[0]["text"])
+        self.assertIn("ผู้สมัคร 1: 120", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_correction_command_creates_corrected_draft_and_new_approval(self) -> None:
         s3_client = _RecordingS3Client()
@@ -320,7 +337,8 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(updated_source["approval_prompt"]["status"], "sent")
         self.assertEqual(len(push_sender.messages), 1)
         self.assertEqual(push_sender.messages[0]["destination_id"], "U123")
-        self.assertIn("ร่างครั้งที่ 2", push_sender.messages[0]["text"])
+        self.assertIn("ร่างครั้งที่ 2", push_sender.messages[0]["messages"][0]["text"])
+        self.assertEqual(push_sender.messages[0]["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
         self.assertNotIn(("election-system", "dev/updates/jobs/upd_approval_src_01JXIMAGE888_r1.json"), s3_client.objects)
 
     def test_correction_command_supports_multiple_candidate_score_overrides(self) -> None:
@@ -447,9 +465,167 @@ class LocalStateStoreTests(unittest.TestCase):
         original_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE890.json")].decode("utf-8"))
         self.assertEqual(correction_manifest["exception"]["code"], "CORRECTION_PARSE_FAILED")
         self.assertEqual(original_source["state"], "awaiting_approval")
+        self.assertEqual(original_source["pending_user_action"], "awaiting_correction_input")
         self.assertNotIn(("election-system", "dev/drafts/src_01JXIMAGE890/revision-2.json"), s3_client.objects)
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
+
+    def test_raw_override_after_edit_button_creates_corrected_draft(self) -> None:
+        s3_client = _RecordingS3Client()
+        push_sender = _RecordingPushSender()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_push_sender=push_sender,
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE890A",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE890A_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE890A/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE890A_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE890A/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE890A_r1",
+            "draft_id": "draft_src_01JXIMAGE890A_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE890A_r1",
+            "revision": 1,
+            "area_id": "12",
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 4, "score": 14}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE890A",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE890A.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE890A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE890A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        initial_result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXCORRECT890A",
+                "replyToken": "reply-token-correct-a",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000890A", "type": "text", "text": "\u0e41\u0e01\u0e49\u0e44\u0e02"},
+            },
+            received_at="2026-06-08T07:53:00Z",
+        )
+        self.assertEqual(initial_result.state, "exception")
+
+        override_result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXT890A",
+                "replyToken": "reply-token-raw-a",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000890B", "type": "text", "text": "4=16"},
+            },
+            received_at="2026-06-08T07:54:00Z",
+        )
+
+        self.assertEqual(override_result.state, "awaiting_approval")
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE890A.json")].decode("utf-8"))
+        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/drafts/src_01JXIMAGE890A/revision-2.json")].decode("utf-8"))
+        self.assertEqual(updated_source["current_draft_id"], "draft_src_01JXIMAGE890A_r2")
+        self.assertIsNone(updated_source["pending_user_action"])
+        self.assertEqual(corrected_draft["candidate_scores"][0]["score"], 16)
+        self.assertEqual(len(push_sender.messages), 1)
+        self.assertEqual(len(reply_sender.messages), 2)
+        self.assertIn("เข้าสู่โหมดแก้ไขแล้ว", reply_sender.messages[0]["text"])
+        self.assertIn("รับการแก้ไขแล้ว", reply_sender.messages[1]["text"])
+        self.assertIn("รายการที่แก้ไข:", reply_sender.messages[1]["text"])
+        self.assertIn("ผู้สมัคร 4: 16", reply_sender.messages[1]["text"])
+
+    def test_invalid_text_after_edit_button_receives_correction_guidance_not_generic_fallback(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE890B",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE890B_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE890B/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE890B_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE890B/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE890B_r1",
+            "draft_id": "draft_src_01JXIMAGE890B_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE890B_r1",
+            "revision": 1,
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 4, "score": 14}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE890B",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE890B.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE890B/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE890B/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXCORRECT890B",
+                "replyToken": "reply-token-correct-b",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000890C", "type": "text", "text": "\u0e41\u0e01\u0e49\u0e44\u0e02"},
+            },
+            received_at="2026-06-08T07:53:00Z",
+        )
+        reply_sender.messages.clear()
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXT890B",
+                "replyToken": "reply-token-raw-b",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000890D", "type": "text", "text": "abc"},
+            },
+            received_at="2026-06-08T07:54:00Z",
+        )
+
+        self.assertEqual(result.state, "exception")
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertIn("4=14", reply_sender.messages[0]["text"])
+        self.assertNotIn("??????", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_ambiguous_text_during_awaiting_approval_receives_correction_guidance(self) -> None:
         s3_client = _RecordingS3Client()
@@ -511,6 +687,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(original_source["state"], "awaiting_approval")
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_generic_text_during_awaiting_approval_receives_fallback_reply(self) -> None:
         s3_client = _RecordingS3Client()
@@ -571,6 +748,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("ยืนยัน", reply_sender.messages[0]["text"])
         self.assertIn("แก้ไข 4=14", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_approval_like_typo_during_awaiting_approval_receives_approval_guidance(self) -> None:
         s3_client = _RecordingS3Client()
@@ -631,6 +809,114 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn('"ยืนยัน"', reply_sender.messages[0]["text"])
         self.assertIn("ถูกต้องอีกครั้ง", reply_sender.messages[0]["text"])
+        self.assertIsNone(reply_sender.messages[0]["messages"])
+
+    def test_correction_after_approval_receives_closed_round_reply(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE895",
+            "workflow_session_id": "line_group_C123",
+            "state": "approved",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE895_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE895/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE895_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE895/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE895_r1",
+            "draft_id": "draft_src_01JXIMAGE895_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "approved",
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE895",
+            "source_type": "approval_command",
+            "updated_at": "2026-06-08T07:59:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE895.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE895/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXT895",
+                "replyToken": "reply-token-text-4",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000896", "type": "text", "text": "แก้ไข"},
+            },
+            received_at="2026-06-08T08:00:00Z",
+        )
+
+        self.assertEqual(result.state, "exception")
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertEqual(reply_sender.messages[0]["text"], "ร่างนี้ถูกรับรองแล้วและปิดรอบตรวจแล้ว\nหากต้องการแก้เพิ่มเติม กรุณาส่งรูปใหม่หรือเปิดรอบแก้ไขใหม่")
+        self.assertIsNone(reply_sender.messages[0]["messages"])
+
+    def test_general_text_after_approval_receives_free_chat_reply(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        chat_client = _RecordingChatClient(response_text="คุยต่อได้ครับ แม้งานก่อนหน้าจะจบแล้ว")
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+            chat_completion_client=chat_client,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE895A",
+            "workflow_session_id": "line_group_C123",
+            "state": "approved",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE895A_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE895A/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE895A_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE895A/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE895A_r1",
+            "draft_id": "draft_src_01JXIMAGE895A_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "approved",
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE895A",
+            "source_type": "approval_command",
+            "updated_at": "2026-06-08T07:59:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE895A.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE895A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXT895A",
+                "replyToken": "reply-token-text-5",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000897", "type": "text", "text": "วันนี้เป็นไงบ้าง"},
+            },
+            received_at="2026-06-08T08:01:00Z",
+        )
+
+        self.assertEqual(result.state, "received")
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertEqual(reply_sender.messages[0]["text"], "คุยต่อได้ครับ แม้งานก่อนหน้าจะจบแล้ว")
 
     def test_approval_after_correction_creates_update_job_from_corrected_draft(self) -> None:
         s3_client = _RecordingS3Client()
@@ -708,7 +994,7 @@ class LocalStateStoreTests(unittest.TestCase):
                 "webhookEventId": "01JXAPPROVE891",
                 "replyToken": "reply-token-approve",
                 "source": {"type": "group", "groupId": "C123", "userId": "U123"},
-                "message": {"id": "550000892", "type": "text", "text": "เธขเธทเธเธขเธฑเธ"},
+                "message": {"id": "550000892", "type": "text", "text": "\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19"},
             },
             received_at="2026-06-08T07:55:00Z",
         )
@@ -721,6 +1007,86 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(update_manifest["payload"]["candidate_scores"][0]["score"], 121)
         self.assertEqual(update_manifest["payload"]["candidate_scores"][1]["score"], 98)
         self.assertEqual(len(queue_client.messages), 1)
+        self.assertEqual(len(reply_sender.messages), 2)
+        self.assertIn("รับการแก้ไขแล้ว", reply_sender.messages[0]["text"])
+        self.assertIn("ผลร่างล่าสุด: ครั้งที่ 2", reply_sender.messages[1]["text"])
+        self.assertIn("รายการที่แก้ไข:", reply_sender.messages[1]["text"])
+        self.assertIn("ผู้สมัคร 1: 121", reply_sender.messages[1]["text"])
+        self.assertIn("ผู้สมัคร 2: 98", reply_sender.messages[1]["text"])
+
+    def test_cancel_after_entering_correction_mode_clears_pending_action(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE892A",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE892A_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE892A/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE892A_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE892A/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE892A_r1",
+            "draft_id": "draft_src_01JXIMAGE892A_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE892A_r1",
+            "revision": 1,
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 4, "score": 14}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE892A",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE892A.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE892A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE892A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        enter_result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXCORRECT892A",
+                "replyToken": "reply-token-enter",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000892A", "type": "text", "text": "แก้ไข"},
+            },
+            received_at="2026-06-08T07:54:00Z",
+        )
+        self.assertEqual(enter_result.state, "exception")
+
+        cancel_result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXT892A",
+                "replyToken": "reply-token-cancel",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000892B", "type": "text", "text": "ยกเลิก"},
+            },
+            received_at="2026-06-08T07:55:00Z",
+        )
+
+        self.assertEqual(cancel_result.state, "received")
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE892A.json")].decode("utf-8"))
+        self.assertIsNone(updated_source.get("pending_user_action"))
+        self.assertEqual(len(reply_sender.messages), 2)
+        self.assertIn("เข้าสู่โหมดแก้ไขแล้ว", reply_sender.messages[0]["text"])
+        self.assertIn("ยกเลิกโหมดแก้ไขแล้ว", reply_sender.messages[1]["text"])
 
     def test_plain_text_does_not_steal_session_anchor_from_latest_image(self) -> None:
         s3_client = _RecordingS3Client()
@@ -757,6 +1123,66 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(result.state, "received")
         session_pointer = json.loads(s3_client.objects[("election-system", "dev/indexes/by-session/line_user_U123/latest.json")].decode("utf-8"))
         self.assertEqual(session_pointer["latest_source_message_id"], "src_01JXIMAGE999")
+
+    def test_general_text_without_active_approval_receives_free_chat_reply(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        chat_client = _RecordingChatClient(response_text="คุยได้ครับ วันนี้อยากให้ช่วยอะไร")
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+            chat_completion_client=chat_client,
+        )
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXTCHAT001",
+                "replyToken": "reply-token-chat-1",
+                "source": {"type": "user", "userId": "U123"},
+                "message": {"id": "550001001", "type": "text", "text": "สวัสดี"},
+            },
+            received_at="2026-06-08T08:10:00Z",
+        )
+
+        self.assertEqual(result.state, "received")
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertEqual(reply_sender.messages[0]["text"], "คุยได้ครับ วันนี้อยากให้ช่วยอะไร")
+        self.assertEqual(len(chat_client.calls), 1)
+        self.assertEqual(chat_client.calls[0][0]["role"], "system")
+        self.assertEqual(chat_client.calls[0][1]["role"], "user")
+
+    def test_general_text_without_active_approval_falls_back_when_chat_fails(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        chat_client = _RecordingChatClient(should_fail=True)
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+            chat_completion_client=chat_client,
+        )
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXTEXTCHAT002",
+                "replyToken": "reply-token-chat-2",
+                "source": {"type": "user", "userId": "U123"},
+                "message": {"id": "550001002", "type": "text", "text": "ทำอะไรได้บ้าง"},
+            },
+            received_at="2026-06-08T08:11:00Z",
+        )
+
+        self.assertEqual(result.state, "received")
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertIn("รับรูป", reply_sender.messages[0]["text"])
+        self.assertIn('แก้ไข 4=14', reply_sender.messages[0]["text"])
 
     def test_persist_image_event_writes_state_to_s3_backend(self) -> None:
         s3_client = _RecordingS3Client()
@@ -842,7 +1268,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(reply_sender.messages[0]["reply_token"], "reply-token-2")
         self.assertEqual(
             reply_sender.messages[0]["text"],
-            "รับรูปเรียบร้อยแล้ว กำลังตรวจข้อมูลจากภาพให้ครับ\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม",
+            "รับรูปเรียบร้อยแล้ว\nกำลังตรวจข้อมูลจากภาพให้ครับ\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม",
         )
 
         duplicate_result = store.persist_line_event(event, received_at="2026-06-08T07:36:00Z")
@@ -880,6 +1306,66 @@ class LocalStateStoreTests(unittest.TestCase):
         queue_message = queue_client.messages[0]
         self.assertEqual(queue_message["MessageGroupId"], "line_group_C123")
         self.assertEqual(queue_message["MessageDeduplicationId"], "ocr_src_01JXIMAGE003")
+
+
+    def test_correction_prompt_uses_message_action(self) -> None:
+        s3_client = _RecordingS3Client()
+        push_sender = _RecordingPushSender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_push_sender=push_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE888A",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE888A_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE888A/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE888A_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE888A/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE888A_r1",
+            "draft_id": "draft_src_01JXIMAGE888A_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE888A_r1",
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 1, "score": 120}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE888A",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE888A.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE888A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE888A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXCORRECT888A",
+                "replyToken": "reply-token-correct",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000888A", "type": "text", "text": "\u0e41\u0e01\u0e49\u0e44\u0e02 1=121"},
+            },
+            received_at="2026-06-08T07:50:00Z",
+        )
+
+        self.assertEqual(result.state, "awaiting_approval")
+        correction_action = push_sender.messages[0]["messages"][0]["quickReply"]["items"][1]["action"]
+        self.assertEqual(correction_action["type"], "message")
+        self.assertEqual(correction_action["text"], "แก้ไข")
 
 
 if __name__ == "__main__":
