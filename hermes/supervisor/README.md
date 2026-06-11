@@ -10,6 +10,8 @@ The currently verified local path is:
 - Ollama on the host machine with `gemma4:26b`
 - LINE gateway enabled in Hermes
 - LINE OA traffic reaching Hermes successfully through `ngrok`
+- S3 as the canonical store for source manifests, drafts, approvals, and update jobs
+- `update-worker` completing approved jobs in `s3_only` mode when no downstream API is configured
 
 Notes on the current local path:
 
@@ -37,6 +39,24 @@ Notes on the current local path:
 - `../../scripts/start-hermes-ocr-worker.ps1` to start the OCR worker container with Docker Compose
 - `../../scripts/start-update-worker.ps1` to start the update worker container with Docker Compose
 - `../../scripts/start-hermes-supervisor-ec2.ps1` and `../../scripts/start-hermes-supervisor-ec2.sh` to start the EC2 all-in-docker stack
+
+## Workflow summary
+
+The currently implemented flow is:
+
+- LINE image enters through `line_webhook_relay.py`
+- supervisor intake persists the source message and enqueues an OCR job
+- `ocr-worker` reads the image from S3, calls Hermes OCR, and writes `draft` plus `approval` artifacts back to S3
+- the user replies either `ยืนยัน` or `แก้ไข ...`
+- a correction creates a new draft revision and a new approval revision
+- an approval creates an update job
+- `update-worker` completes the update job
+  - if `UPDATE_WORKER_TARGET_API_BASE_URL` is set, it POSTs to that API
+  - if `UPDATE_WORKER_TARGET_API_BASE_URL` is blank, it completes in `s3_only` mode and S3 remains the final output
+
+Current product assumption:
+
+- downstream display reads the latest approved result from S3 directly
 
 ## Directory layout
 
@@ -125,9 +145,38 @@ Current update worker behavior:
 - resolves `UPDATE_WORKER_*` environment variables through Docker Compose
 - consumes approved update jobs from SQS when `UPDATE_WORKER_QUEUE_URL` is configured
 - reads update job manifests from S3 and marks them `processing`, then `completed` or `failed`
-- POSTs approved payloads to `UPDATE_WORKER_TARGET_API_BASE_URL + /updates`
-- updates the related source message state from `approved` to `updating` and `updated` on success
+- POSTs approved payloads to `UPDATE_WORKER_TARGET_API_BASE_URL + /updates` when that variable is set
+- if `UPDATE_WORKER_TARGET_API_BASE_URL` is blank, completes the job in `s3_only` mode instead of failing
+- keeps the related source message in `approved` state for `s3_only` mode, because S3 is already the canonical result store
 - remains an optional Compose profile so it does not affect the default supervisor stack until its queue and target API are configured
+
+## Minimum env for the current local path
+
+Required for the current LINE -> OCR -> approval -> S3 workflow:
+
+- `LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_CHANNEL_SECRET`
+- `LINE_PUBLIC_URL`
+- `SUPERVISOR_STORAGE_BACKEND=s3`
+- `SUPERVISOR_S3_BUCKET`
+- `SUPERVISOR_S3_REGION`
+- `SUPERVISOR_S3_PREFIX`
+- `SUPERVISOR_OCR_QUEUE_URL`
+- `OCR_WORKER_QUEUE_URL`
+- `OCR_WORKER_S3_BUCKET`
+- `OCR_WORKER_S3_PREFIX`
+- `UPDATE_WORKER_QUEUE_URL`
+- `UPDATE_WORKER_S3_BUCKET`
+- `UPDATE_WORKER_S3_PREFIX`
+
+Optional in the current implementation:
+
+- `UPDATE_WORKER_TARGET_API_BASE_URL`
+  - leave blank when S3 is the final output
+  - set it only when an external `/updates` API really exists
+- `SUPERVISOR_S3_ENDPOINT`
+- `SUPERVISOR_OCR_QUEUE_REGION`
+- `SUPERVISOR_UPDATE_QUEUE_REGION`
 
 ## Local intake implementation slice
 
@@ -183,6 +232,13 @@ Scope note:
 - for local development, `line_webhook_relay.py` terminates the public LINE webhook path at the intake persistence slice and avoids forwarding webhook POSTs into Hermes directly
 - when `SUPERVISOR_STORAGE_BACKEND=local-mock`, this slice persists to local files as a stand-in for the S3 manifest layout
 - when `SUPERVISOR_STORAGE_BACKEND=s3`, the intake slice writes `source_message` manifests, derived indexes, `original.bin`, and `metadata.json` to S3 directly
+
+Approval and correction behavior:
+
+- `ยืนยัน` approves the current draft revision and sends a success reply back to LINE
+- `แก้ไข ...` creates a corrected draft revision and sends a fresh approval prompt
+- ambiguous correction text receives a guidance reply instead of silently doing nothing
+- approval-like typos such as `ยันยืน` receive a reply telling the user to send `ยืนยัน` exactly
 
 ## LINE webhook setup
 
