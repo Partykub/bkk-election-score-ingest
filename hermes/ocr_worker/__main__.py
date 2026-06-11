@@ -297,6 +297,38 @@ def acknowledge_job(*, queue_client: Any, config: WorkerConfig, downloaded_job: 
     queue_client.delete_message(QueueUrl=config.queue_url, ReceiptHandle=downloaded_job.receipt_handle)
 
 
+def max_attempts_for_job(ocr_job_manifest: dict[str, Any]) -> int:
+    try:
+        return max(1, int(ocr_job_manifest.get("max_attempts") or 5))
+    except (TypeError, ValueError):
+        return 5
+
+
+def is_retryable_ocr_error_message(message: str) -> bool:
+    normalized = (message or "").strip().lower()
+    if not normalized:
+        return False
+    retryable_fragments = (
+        "remote end closed connection without response",
+        "connection reset",
+        "connection aborted",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "too many requests",
+    )
+    if any(fragment in normalized for fragment in retryable_fragments):
+        return True
+    return bool(re.search(r"status\s+(429|500|502|503|504)\b", normalized))
+
+
+def should_acknowledge_result(result_payload: dict[str, Any]) -> bool:
+    return str(result_payload.get("status") or "").strip() != "retry_pending"
+
+
 def extract_first_json_object(raw_text: str) -> dict[str, Any]:
     text = raw_text.strip()
     if text.startswith("```"):
@@ -441,8 +473,8 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
+    lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
-
 
 def build_line_text_message(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text[:5000]}
@@ -467,8 +499,12 @@ def build_approval_quick_reply_items(*, correction_url: str | None = None) -> li
             "imageUrl": None,
             "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
         },
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
+        },
     ]
-
 
 def build_approval_action_messages(text: str, *, correction_url: str | None = None) -> list[dict[str, Any]]:
     message = build_line_text_message(text)
@@ -579,6 +615,57 @@ def maybe_send_approval_prompt(
 
     write_json_object(s3_client, bucket=bucket, key=source_manifest_path, payload=source_manifest)
     return source_manifest["approval_prompt"]
+
+
+def maybe_send_ocr_failure_notice(
+    *,
+    s3_client: Any,
+    bucket: str,
+    source_manifest_path: str,
+    source_manifest: dict[str, Any] | None,
+    config: WorkerConfig,
+    timestamp: str,
+    opener: Any = request.urlopen,
+) -> dict[str, Any] | None:
+    if source_manifest is None:
+        return None
+
+    destination_id = line_destination_id_for_source_manifest(source_manifest)
+    if not config.line_channel_access_token or not destination_id:
+        source_manifest["ocr_failure_notice"] = {
+            "status": "skipped",
+            "reason": "missing_line_channel_access_token" if not config.line_channel_access_token else "missing_line_destination",
+            "updated_at": timestamp,
+        }
+        write_json_object(s3_client, bucket=bucket, key=source_manifest_path, payload=source_manifest)
+        return source_manifest["ocr_failure_notice"]
+
+    try:
+        send_line_push_message(
+            channel_access_token=config.line_channel_access_token,
+            destination_id=destination_id,
+            text="ขออภัย ระบบอ่านรูปนี้ไม่สำเร็จ กรุณาส่งรูปเดิมอีกครั้ง หรือลองถ่ายใหม่ให้ชัดขึ้น",
+            api_base_url=config.line_api_base_url,
+            opener=opener,
+        )
+        source_manifest["ocr_failure_notice"] = {
+            "status": "sent",
+            "destination_id": destination_id,
+            "message_type": "push",
+            "sent_at": timestamp,
+            "updated_at": timestamp,
+        }
+    except Exception as exc:
+        source_manifest["ocr_failure_notice"] = {
+            "status": "failed",
+            "destination_id": destination_id,
+            "message_type": "push",
+            "error": str(exc),
+            "updated_at": timestamp,
+        }
+
+    write_json_object(s3_client, bucket=bucket, key=source_manifest_path, payload=source_manifest)
+    return source_manifest["ocr_failure_notice"]
 
 
 def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_version: str) -> str:
@@ -902,6 +989,43 @@ def persist_failure(
         )
 
 
+def persist_retry_pending(
+    *,
+    s3_client: Any,
+    downloaded_job: DownloadedJob,
+    prefix: str | None,
+    ocr_job_manifest: dict[str, Any] | None,
+    source_manifest: dict[str, Any] | None,
+    code: str,
+    message: str,
+    timestamp: str,
+) -> None:
+    if ocr_job_manifest is not None:
+        ocr_job_manifest["state"] = "queued"
+        ocr_job_manifest["error"] = {"code": code, "message": message, "retryable": True}
+        ocr_job_manifest["updated_at"] = timestamp
+        write_json_object(s3_client, bucket=downloaded_job.manifest_bucket, key=downloaded_job.manifest_key, payload=ocr_job_manifest)
+
+    if source_manifest is not None:
+        source_manifest["state"] = "queued"
+        source_manifest["exception"] = None
+        source_manifest["ocr_retry"] = {
+            "status": "pending",
+            "code": code,
+            "message": message,
+            "attempt_count": int((ocr_job_manifest or {}).get("attempt_count") or 0),
+            "max_attempts": max_attempts_for_job(ocr_job_manifest or {}),
+            "updated_at": timestamp,
+        }
+        source_manifest["updated_at"] = timestamp
+        write_json_object(
+            s3_client,
+            bucket=downloaded_job.manifest_bucket,
+            key=with_s3_prefix(source_manifest_key(downloaded_job.source_message_id), prefix=prefix),
+            payload=source_manifest,
+        )
+
+
 def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, config: WorkerConfig) -> dict[str, Any]:
     timestamp = utc_now_iso()
     ocr_job_manifest = read_json_object(s3_client, bucket=downloaded_job.manifest_bucket, key=downloaded_job.manifest_key)
@@ -1009,6 +1133,8 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
             source_manifest["current_draft_key"] = revision_key
             source_manifest["current_ocr_job_id"] = downloaded_job.ocr_job_id
             source_manifest["exception"] = None
+            source_manifest["ocr_retry"] = None
+            source_manifest["ocr_failure_notice"] = None
             source_manifest["updated_at"] = timestamp
             approval_manifest, approval_id, approval_key = ensure_approval_artifacts(
                 s3_client=s3_client,
@@ -1050,6 +1176,34 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
         }
     except Exception as exc:
         error_message = str(exc)
+        failure_timestamp = utc_now_iso()
+        attempt_count = int(ocr_job_manifest.get("attempt_count") or 0)
+        max_attempts = max_attempts_for_job(ocr_job_manifest)
+        retryable = is_retryable_ocr_error_message(error_message)
+        if retryable and attempt_count < max_attempts:
+            persist_retry_pending(
+                s3_client=s3_client,
+                downloaded_job=downloaded_job,
+                prefix=config.s3_prefix,
+                ocr_job_manifest=ocr_job_manifest,
+                source_manifest=source_manifest,
+                code="OCR_PROCESSING_RETRY_PENDING",
+                message=error_message,
+                timestamp=failure_timestamp,
+            )
+            return {
+                "service": "ocr-worker",
+                "status": "retry_pending",
+                "ocr_job_id": downloaded_job.ocr_job_id,
+                "source_message_id": downloaded_job.source_message_id,
+                "workflow_session_id": downloaded_job.workflow_session_id,
+                "error": {"code": "OCR_PROCESSING_RETRY_PENDING", "message": error_message},
+                "attempt_count": attempt_count,
+                "max_attempts": max_attempts,
+                "hermes_base_url": config.hermes_base_url,
+                "model_name": config.model_name,
+            }
+
         persist_failure(
             s3_client=s3_client,
             downloaded_job=downloaded_job,
@@ -1058,7 +1212,15 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
             source_manifest=source_manifest,
             code="OCR_PROCESSING_FAILED",
             message=error_message,
-            timestamp=utc_now_iso(),
+            timestamp=failure_timestamp,
+        )
+        failure_notice = maybe_send_ocr_failure_notice(
+            s3_client=s3_client,
+            bucket=downloaded_job.manifest_bucket,
+            source_manifest_path=source_manifest_path,
+            source_manifest=source_manifest,
+            config=config,
+            timestamp=failure_timestamp,
         )
         return {
             "service": "ocr-worker",
@@ -1067,6 +1229,9 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
             "source_message_id": downloaded_job.source_message_id,
             "workflow_session_id": downloaded_job.workflow_session_id,
             "error": {"code": "OCR_PROCESSING_FAILED", "message": error_message},
+            "attempt_count": attempt_count,
+            "max_attempts": max_attempts,
+            "failure_notice": failure_notice,
             "hermes_base_url": config.hermes_base_url,
             "model_name": config.model_name,
         }
@@ -1192,7 +1357,8 @@ def main() -> None:
         for downloaded_job in downloaded_jobs:
             result_payload = process_downloaded_job(downloaded_job=downloaded_job, s3_client=s3_client, config=config)
             print(json.dumps(result_payload, ensure_ascii=False))
-            acknowledge_job(queue_client=queue_client, config=config, downloaded_job=downloaded_job)
+            if should_acknowledge_result(result_payload):
+                acknowledge_job(queue_client=queue_client, config=config, downloaded_job=downloaded_job)
 
 
 if __name__ == "__main__":

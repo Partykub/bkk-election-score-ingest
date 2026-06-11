@@ -341,6 +341,63 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(push_sender.messages[0]["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
         self.assertNotIn(("election-system", "dev/updates/jobs/upd_approval_src_01JXIMAGE888_r1.json"), s3_client.objects)
 
+    def test_reject_command_replies_with_closed_round_message(self) -> None:
+        s3_client = _RecordingS3Client()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE889",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE889_r1",
+            "current_draft_key": "dev/drafts/src_01JXIMAGE889/revision-1.json",
+            "current_approval_id": "approval_src_01JXIMAGE889_r1",
+            "current_approval_key": "dev/approvals/src_01JXIMAGE889/revision-1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE889_r1",
+            "draft_id": "draft_src_01JXIMAGE889_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE889_r1",
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 1, "score": 120}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE889",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE889.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE889/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE889/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXREJECT889",
+                "replyToken": "reply-token-reject",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000889", "type": "text", "text": "\u0e44\u0e21\u0e48\u0e16\u0e39\u0e01\u0e15\u0e49\u0e2d\u0e07"},
+            },
+            received_at="2026-06-08T07:55:00Z",
+        )
+
+        self.assertEqual(result.state, "rejected")
+        self.assertEqual(reply_sender.messages[0]["text"], "\u0e1b\u0e0f\u0e34\u0e40\u0e2a\u0e18\u0e23\u0e48\u0e32\u0e07\u0e19\u0e35\u0e49\u0e41\u0e25\u0e49\u0e27\n\u0e23\u0e30\u0e1a\u0e1a\u0e08\u0e30\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e19\u0e33\u0e1c\u0e25\u0e0a\u0e38\u0e14\u0e19\u0e35\u0e49\u0e44\u0e1b\u0e43\u0e0a\u0e49\n\u0e2b\u0e32\u0e01\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23\u0e14\u0e33\u0e40\u0e19\u0e34\u0e19\u0e01\u0e32\u0e23\u0e15\u0e48\u0e2d \u0e01\u0e23\u0e38\u0e13\u0e32\u0e2a\u0e48\u0e07\u0e23\u0e39\u0e1b\u0e43\u0e2b\u0e21\u0e48\u0e2d\u0e35\u0e01\u0e04\u0e23\u0e31\u0e49\u0e07")
+
     def test_correction_command_supports_multiple_candidate_score_overrides(self) -> None:
         s3_client = _RecordingS3Client()
         state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)

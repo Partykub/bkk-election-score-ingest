@@ -196,7 +196,7 @@ def build_approval_guidance_text() -> str:
 
 
 def build_pending_approval_fallback_text() -> str:
-    return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หรือหากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14"'
+    return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14" หรือหากต้องการปฏิเสธร่างนี้ให้ตอบ "ไม่ถูกต้อง"'
 
 
 def build_general_help_text() -> str:
@@ -307,6 +307,10 @@ def build_correction_cancelled_text() -> str:
     return 'ยกเลิกโหมดแก้ไขแล้ว\nหากต้องการรับรองให้ตอบ "ยืนยัน" หรือหากต้องการแก้ไขให้เริ่มใหม่ด้วย "แก้ไข"'
 
 
+def build_reject_acknowledgment_text() -> str:
+    return "ปฏิเสธร่างนี้แล้ว\nระบบจะยังไม่นำผลชุดนี้ไปใช้\nหากต้องการดำเนินการต่อ กรุณาส่งรูปใหม่อีกครั้ง"
+
+
 def build_post_approval_approval_text() -> str:
     return "ร่างนี้ถูกรับรองแล้ว ไม่ต้องยืนยันซ้ำ"
 
@@ -364,6 +368,11 @@ def build_approval_quick_reply_items(*, correction_url: str | None = None) -> li
             "type": "action",
             "imageUrl": None,
             "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
+        },
+        {
+            "type": "action",
+            "imageUrl": None,
+            "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
         },
     ]
 
@@ -517,6 +526,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
+    lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
 
 
@@ -1663,6 +1673,28 @@ class LocalStateStore:
         except Exception as exc:
             print(f"line intake: unable to send correction acknowledgment: {exc}", file=sys.stderr)
 
+    def _maybe_send_reject_acknowledgment(self, manifest: dict[str, Any]) -> None:
+        if self.line_reply_sender is None:
+            return
+
+        reply_token = str(manifest.get("line_reply_token") or "").strip()
+        if not reply_token:
+            return
+
+        if manifest.get("approval_action") != "reject":
+            return
+
+        if manifest.get("state") != "rejected":
+            return
+
+        if manifest.get("exception") is not None:
+            return
+
+        try:
+            self.line_reply_sender(reply_token=reply_token, text=build_reject_acknowledgment_text())
+        except Exception as exc:
+            print(f"line intake: unable to send reject acknowledgment: {exc}", file=sys.stderr)
+
     def persist_line_event(self, event: dict[str, Any], received_at: str | None = None) -> ProcessedEvent:
         line_event_id = event.get("webhookEventId") or "unknown-event"
         source_message_id = source_message_id_for(line_event_id)
@@ -1804,6 +1836,7 @@ class LocalStateStore:
         self._maybe_send_image_acknowledgment(manifest)
         self._maybe_send_approval_acknowledgment(manifest)
         self._maybe_send_correction_acknowledgment(manifest)
+        self._maybe_send_reject_acknowledgment(manifest)
         self._reply_text_for_active_approval(manifest)
 
         return ProcessedEvent(

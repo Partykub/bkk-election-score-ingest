@@ -23,6 +23,7 @@ from hermes.ocr_worker.__main__ import (
     poll_queue_once,
     process_downloaded_job,
     send_line_push_message,
+    should_acknowledge_result,
     with_s3_prefix,
 )
 
@@ -342,6 +343,7 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertNotIn("ความมั่นใจ:", prompt)
         self.assertNotIn("ธงตรวจสอบ:", prompt)
         self.assertIn("ตอบ 'ยืนยัน'", prompt)
+        self.assertIn("ตอบ 'ไม่ถูกต้อง'", prompt)
 
     def test_send_line_push_message_posts_expected_payload(self):
         opener = _RecordingUrlOpen()
@@ -592,6 +594,139 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(updated_source_manifest["state"], "awaiting_approval")
         self.assertEqual(updated_source_manifest["current_approval_id"], "approval_src_20260609_0007_r1")
         self.assertIn(("bucket-a", "api-data/score/approvals/src_20260609_0007/latest.json"), s3_client.objects)
+
+    def test_process_downloaded_job_keeps_queue_message_for_retryable_ocr_failure(self):
+        s3_client = _FakeS3Client(
+            {
+                (
+                    "bucket-a",
+                    "api-data/score/manifests/ocr-jobs/ocr_20260611_0001.json",
+                ): json.dumps(
+                    {
+                        "ocr_job_id": "ocr_20260611_0001",
+                        "source_message_id": "src_20260611_0001",
+                        "workflow_session_id": "line_user_U111",
+                        "state": "queued",
+                        "max_attempts": 5,
+                        "attempt_count": 0,
+                        "input": {
+                            "bucket": "bucket-a",
+                            "key": "inbound/src_20260611_0001/original.bin",
+                        },
+                        "ocr_options": {"prompt_version": "ocr-v1"},
+                    }
+                ).encode("utf-8"),
+                (
+                    "bucket-a",
+                    "api-data/score/inbound/src_20260611_0001/original.bin",
+                ): (b"binary-data", "image/jpeg"),
+                (
+                    "bucket-a",
+                    "api-data/score/manifests/source-messages/src_20260611_0001.json",
+                ): json.dumps(
+                    {
+                        "source_message_id": "src_20260611_0001",
+                        "workflow_session_id": "line_user_U111",
+                        "sender_user_id": "U111",
+                        "state": "queued",
+                    }
+                ).encode("utf-8"),
+            }
+        )
+        downloaded_job = fetch_job_from_queue_message(
+            {
+                "MessageId": "msg-11",
+                "ReceiptHandle": "receipt-11",
+                "Body": json.dumps({"ocr_job_id": "ocr_20260611_0001"}),
+            },
+            s3_client=s3_client,
+            config=self.config,
+        )
+
+        with mock.patch(
+            "hermes.ocr_worker.__main__.call_hermes_ocr",
+            side_effect=RuntimeError("Remote end closed connection without response"),
+        ):
+            result = process_downloaded_job(downloaded_job=downloaded_job, s3_client=s3_client, config=self.config)
+
+        self.assertEqual(result["status"], "retry_pending")
+        self.assertFalse(should_acknowledge_result(result))
+        updated_job_manifest = json.loads(
+            s3_client.objects[("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260611_0001.json")].decode("utf-8")
+        )
+        updated_source_manifest = json.loads(
+            s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_20260611_0001.json")].decode("utf-8")
+        )
+        self.assertEqual(updated_job_manifest["state"], "queued")
+        self.assertTrue(updated_job_manifest["error"]["retryable"])
+        self.assertEqual(updated_source_manifest["state"], "queued")
+        self.assertEqual(updated_source_manifest["ocr_retry"]["status"], "pending")
+
+    def test_process_downloaded_job_sends_failure_notice_after_retry_exhausted(self):
+        s3_client = _FakeS3Client(
+            {
+                (
+                    "bucket-a",
+                    "api-data/score/manifests/ocr-jobs/ocr_20260611_0002.json",
+                ): json.dumps(
+                    {
+                        "ocr_job_id": "ocr_20260611_0002",
+                        "source_message_id": "src_20260611_0002",
+                        "workflow_session_id": "line_user_U222",
+                        "state": "queued",
+                        "max_attempts": 1,
+                        "attempt_count": 0,
+                        "input": {
+                            "bucket": "bucket-a",
+                            "key": "inbound/src_20260611_0002/original.bin",
+                        },
+                        "ocr_options": {"prompt_version": "ocr-v1"},
+                    }
+                ).encode("utf-8"),
+                (
+                    "bucket-a",
+                    "api-data/score/inbound/src_20260611_0002/original.bin",
+                ): (b"binary-data", "image/jpeg"),
+                (
+                    "bucket-a",
+                    "api-data/score/manifests/source-messages/src_20260611_0002.json",
+                ): json.dumps(
+                    {
+                        "source_message_id": "src_20260611_0002",
+                        "workflow_session_id": "line_user_U222",
+                        "sender_user_id": "U222",
+                        "state": "queued",
+                    }
+                ).encode("utf-8"),
+            }
+        )
+        downloaded_job = fetch_job_from_queue_message(
+            {
+                "MessageId": "msg-12",
+                "ReceiptHandle": "receipt-12",
+                "Body": json.dumps({"ocr_job_id": "ocr_20260611_0002"}),
+            },
+            s3_client=s3_client,
+            config=self.config,
+        )
+        with mock.patch(
+            "hermes.ocr_worker.__main__.call_hermes_ocr",
+            side_effect=RuntimeError("Remote end closed connection without response"),
+        ), mock.patch("hermes.ocr_worker.__main__.send_line_push_message") as send_line_push:
+            result = process_downloaded_job(downloaded_job=downloaded_job, s3_client=s3_client, config=self.config)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(should_acknowledge_result(result))
+        updated_job_manifest = json.loads(
+            s3_client.objects[("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260611_0002.json")].decode("utf-8")
+        )
+        updated_source_manifest = json.loads(
+            s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_20260611_0002.json")].decode("utf-8")
+        )
+        self.assertEqual(updated_job_manifest["state"], "failed")
+        self.assertEqual(updated_source_manifest["state"], "exception")
+        self.assertEqual(updated_source_manifest["ocr_failure_notice"]["status"], "sent")
+        self.assertEqual(send_line_push.call_args.kwargs["destination_id"], "U222")
 
 
     def test_maybe_send_approval_prompt_uses_message_action(self):
