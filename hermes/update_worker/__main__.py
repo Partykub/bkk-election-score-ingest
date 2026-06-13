@@ -68,11 +68,26 @@ def build_config() -> WorkerConfig:
     )
 
 
+def source_message_id_from_update_job_id(update_job_id: str) -> str:
+    cleaned = update_job_id
+    if cleaned.startswith("upd_approval_"):
+        cleaned = cleaned[13:]
+    elif cleaned.startswith("upd_"):
+        cleaned = cleaned[4:]
+    if "_r" in cleaned:
+        cleaned = cleaned.rsplit("_r", 1)[0]
+    return cleaned
+
+
 def manifest_key_for_job(update_job_id: str) -> str:
-    return f"updates/jobs/{update_job_id}.json"
+    src_id = source_message_id_from_update_job_id(update_job_id)
+    return f"messages/{src_id}/update_job.json"
 
 
 def update_job_id_from_manifest_key(manifest_key: str) -> str:
+    parts = manifest_key.split("/")
+    if len(parts) >= 2 and parts[-1] == "update_job.json":
+        return f"upd_{parts[-2]}"
     return manifest_key.rsplit("/", 1)[-1].removesuffix(".json")
 
 
@@ -127,7 +142,7 @@ def with_s3_prefix(relative_key: str, *, prefix: str | None) -> str:
 
 
 def source_manifest_key(source_message_id: str) -> str:
-    return f"manifests/source-messages/{source_message_id}.json"
+    return f"messages/{source_message_id}/manifest.json"
 
 
 def is_missing_key_error(exc: Exception) -> bool:

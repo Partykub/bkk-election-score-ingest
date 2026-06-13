@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -119,15 +120,27 @@ def source_message_id_for(line_event_id: str) -> str:
 
 
 def approval_revision_path(source_message_id: str, revision: int) -> str:
-    return f"approvals/{source_message_id}/revision-{revision}.json"
+    return f"messages/{source_message_id}/approval_r{revision}.json"
 
 
 def approval_latest_path(source_message_id: str) -> str:
-    return f"approvals/{source_message_id}/latest.json"
+    return f"messages/{source_message_id}/approval_latest.json"
+
+
+def source_message_id_from_update_job_id(update_job_id: str) -> str:
+    cleaned = update_job_id
+    if cleaned.startswith("upd_approval_"):
+        cleaned = cleaned[13:]
+    elif cleaned.startswith("upd_"):
+        cleaned = cleaned[4:]
+    if "_r" in cleaned:
+        cleaned = cleaned.rsplit("_r", 1)[0]
+    return cleaned
 
 
 def update_job_path(update_job_id: str) -> str:
-    return f"updates/jobs/{update_job_id}.json"
+    src_id = source_message_id_from_update_job_id(update_job_id)
+    return f"messages/{src_id}/update_job.json"
 
 
 def normalize_approval_action(source_type: str, source_text: str | None) -> str:
@@ -179,8 +192,12 @@ class CandidateScoreOverride:
     score: int
 
 
-def build_image_received_text() -> str:
-    return "รับรูปเรียบร้อยแล้ว\nกำลังตรวจข้อมูลจากภาพให้ครับ\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม"
+def build_image_received_text(*, queue_position: int = 0, total_in_queue: int = 0) -> str:
+    base = "รับรูปเรียบร้อยแล้ว\nกำลังตรวจข้อมูลจากภาพให้ครับ"
+    if total_in_queue > 1:
+        base += f"\n(รอคิว: {total_in_queue} รูป)"
+    base += "\nเดี๋ยวส่งผลให้ตรวจทานอีกครั้งเมื่อพร้อม"
+    return base
 
 
 def build_correction_guidance_text() -> str:
@@ -392,11 +409,11 @@ def build_correction_form_url_for_source_manifest(source_manifest: dict[str, Any
 
 
 def draft_revision_path(source_message_id: str, revision: int) -> str:
-    return f"drafts/{source_message_id}/revision-{revision}.json"
+    return f"messages/{source_message_id}/draft_r{revision}.json"
 
 
 def draft_latest_path(source_message_id: str) -> str:
-    return f"drafts/{source_message_id}/latest.json"
+    return f"messages/{source_message_id}/draft_latest.json"
 
 
 def build_result_signature(area_id: Any, candidate_scores: Any) -> str | None:
@@ -903,6 +920,8 @@ class LocalStateStore:
         self.line_reply_sender = line_reply_sender or build_line_reply_sender_from_env()
         self.line_push_sender = line_push_sender or build_line_push_sender_from_env()
         self.chat_completion_client = chat_completion_client or build_supervisor_chat_client_from_env()
+        self._locks_lock = threading.Lock()
+        self._session_locks = {}
 
     def _write_json(self, relative_path: str, payload: dict[str, Any]) -> str:
         return self.state_backend.write_json(relative_path, payload)
@@ -919,19 +938,25 @@ class LocalStateStore:
         return normalized
 
     def event_index_path(self, line_event_id: str) -> str:
-        return f"indexes/by-line-event-id/{safe_id(line_event_id)}.json"
+        return f"events/{safe_id(line_event_id)}.json"
 
     def message_index_path(self, line_message_id: str) -> str:
-        return f"indexes/by-line-message-id/{safe_id(line_message_id)}.json"
+        return f"events/{safe_id(line_message_id)}.json"
 
     def session_pointer_path(self, workflow_session_id: str) -> str:
-        return f"indexes/by-session/{safe_id(workflow_session_id)}/latest.json"
+        return f"sessions/{safe_id(workflow_session_id)}/latest.json"
 
     def source_manifest_path(self, source_message_id: str) -> str:
-        return f"manifests/source-messages/{source_message_id}.json"
+        return f"messages/{source_message_id}/manifest.json"
 
     def ocr_job_manifest_path(self, ocr_job_id: str) -> str:
-        return f"manifests/ocr-jobs/{ocr_job_id}.json"
+        if ocr_job_id.startswith("ocr_"):
+            src_id = ocr_job_id[4:]
+        else:
+            src_id = ocr_job_id
+        if not src_id.startswith("src_"):
+            src_id = f"src_{src_id}"
+        return f"messages/{src_id}/ocr_job.json"
 
     def ocr_job_id_for(self, source_message_id: str) -> str:
         return f"ocr_{safe_id(source_message_id)}"
@@ -1019,7 +1044,11 @@ class LocalStateStore:
 
     def _resolve_active_approval(self, workflow_session_id: str) -> tuple[str | None, dict[str, Any] | None, str | None, dict[str, Any] | None]:
         session_pointer = self.read_session_pointer(workflow_session_id) or {}
-        target_source_message_id = str(session_pointer.get("latest_source_message_id") or "").strip() or None
+        target_source_message_id = (
+            str(session_pointer.get("active_review_source_message_id") or "").strip()
+            or str(session_pointer.get("latest_source_message_id") or "").strip()
+            or None
+        )
         if not target_source_message_id:
             return None, None, None, None
 
@@ -1598,11 +1627,6 @@ class LocalStateStore:
             target_source_manifest["current_update_job_key"] = None
             target_source_manifest["exception"] = None
             target_source_manifest["pending_user_action"] = None
-            self._send_approval_prompt_for_draft(
-                source_manifest=target_source_manifest,
-                draft_manifest=corrected_draft,
-                timestamp=timestamp,
-            )
             manifest["correction_payload"] = correction_payload
 
         self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
@@ -1611,7 +1635,73 @@ class LocalStateStore:
         manifest["current_draft_id"] = target_source_manifest.get("current_draft_id") or draft_manifest.get("draft_id")
         manifest["current_approval_id"] = target_source_manifest.get("current_approval_id") or approval_manifest.get("approval_id")
         manifest["current_update_job_id"] = update_job_id
+
+        if action == "correct":
+            self._maybe_send_correction_acknowledgment(manifest)
+            manifest["line_reply_token"] = None
+            import time
+            time.sleep(1.0)
+            self._send_approval_prompt_for_draft(
+                source_manifest=target_source_manifest,
+                draft_manifest=corrected_draft,
+                timestamp=timestamp,
+            )
+            self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
+        elif action in {"approve", "reject"}:
+            if action == "approve":
+                self._maybe_send_approval_acknowledgment(manifest)
+            else:
+                self._maybe_send_reject_acknowledgment(manifest)
+            manifest["line_reply_token"] = None
+            import time
+            time.sleep(1.0)
+            self._advance_review_queue(workflow_session_id, timestamp=timestamp)
+
         return manifest["state"], target_source_message_id
+
+    def _advance_review_queue(self, workflow_session_id: str, *, timestamp: str) -> None:
+        session_pointer = self.read_session_pointer(workflow_session_id) or {}
+        pending_queue = list(session_pointer.get("pending_review_queue") or [])
+        completed_count = int(session_pointer.get("completed_review_count") or 0) + 1
+        total_count = int(session_pointer.get("total_received_count") or 0)
+
+        if not pending_queue:
+            session_pointer["active_review_source_message_id"] = None
+            session_pointer["completed_review_count"] = completed_count
+            session_pointer["updated_at"] = timestamp
+            self._write_json(self.session_pointer_path(workflow_session_id), session_pointer)
+            return
+
+        next_source_message_id = pending_queue.pop(0)
+        session_pointer["active_review_source_message_id"] = next_source_message_id
+        session_pointer["pending_review_queue"] = pending_queue
+        session_pointer["completed_review_count"] = completed_count
+        session_pointer["updated_at"] = timestamp
+        self._write_json(self.session_pointer_path(workflow_session_id), session_pointer)
+
+        next_manifest = self.read_manifest(next_source_message_id)
+        if next_manifest is not None and next_manifest.get("state") == "awaiting_approval":
+            draft_key = str(next_manifest.get("current_draft_key") or "").strip()
+            draft_manifest = self._read_json(self._normalize_state_path(draft_key)) if draft_key else None
+            if draft_manifest is not None:
+                self._send_approval_prompt_for_draft(
+                    source_manifest=next_manifest,
+                    draft_manifest=draft_manifest,
+                    timestamp=timestamp,
+                )
+                self._write_json(self.source_manifest_path(next_source_message_id), next_manifest)
+                return
+
+        destination_id = self._line_destination_id_for_source_manifest(next_manifest or {})
+        if self.line_push_sender is not None and destination_id:
+            try:
+                remaining = len(pending_queue) + 1
+                self.line_push_sender(
+                    destination_id=destination_id,
+                    text=f"รอผล OCR ของรูปถัดไปอยู่ ({completed_count + 1}/{total_count})\nจะส่งให้ตรวจเมื่อพร้อม",
+                )
+            except Exception:
+                pass
 
     def _maybe_send_image_acknowledgment(self, manifest: dict[str, Any]) -> None:
         if self.line_reply_sender is None:
@@ -1627,8 +1717,11 @@ class LocalStateStore:
         if manifest.get("state") not in {"stored", "queued"}:
             return
 
+        queue_position = int(manifest.get("_queue_position") or 0)
+        total_in_queue = int(manifest.get("_total_in_queue") or 0)
+
         try:
-            self.line_reply_sender(reply_token=reply_token, text=build_image_received_text())
+            self.line_reply_sender(reply_token=reply_token, text=build_image_received_text(queue_position=queue_position, total_in_queue=total_in_queue))
         except Exception as exc:
             print(f"line intake: unable to send image acknowledgment: {exc}", file=sys.stderr)
 
@@ -1696,6 +1789,16 @@ class LocalStateStore:
             print(f"line intake: unable to send reject acknowledgment: {exc}", file=sys.stderr)
 
     def persist_line_event(self, event: dict[str, Any], received_at: str | None = None) -> ProcessedEvent:
+        workflow_session_id = stable_workflow_session_id(event)
+        with self._locks_lock:
+            if workflow_session_id not in self._session_locks:
+                self._session_locks[workflow_session_id] = threading.Lock()
+            session_lock = self._session_locks[workflow_session_id]
+
+        with session_lock:
+            return self._persist_line_event_locked(event, received_at)
+
+    def _persist_line_event_locked(self, event: dict[str, Any], received_at: str | None = None) -> ProcessedEvent:
         line_event_id = event.get("webhookEventId") or "unknown-event"
         source_message_id = source_message_id_for(line_event_id)
         source_type = detect_source_type(event)
@@ -1745,7 +1848,24 @@ class LocalStateStore:
         }
 
         if source_type == "image":
-            session_pointer_source_message_id = source_message_id
+            existing_session_pointer = self.read_session_pointer(workflow_session_id) or {}
+            active_review_id = str(existing_session_pointer.get("active_review_source_message_id") or "").strip()
+            existing_pending_queue = list(existing_session_pointer.get("pending_review_queue") or [])
+            existing_total = int(existing_session_pointer.get("total_received_count") or 0)
+
+            if not active_review_id:
+                session_pointer_source_message_id = source_message_id
+                new_active_review_id = source_message_id
+                new_pending_queue = existing_pending_queue
+            else:
+                session_pointer_source_message_id = active_review_id
+                new_active_review_id = active_review_id
+                new_pending_queue = existing_pending_queue + [source_message_id]
+
+            new_total = existing_total + 1
+            manifest["_queue_position"] = new_total
+            manifest["_total_in_queue"] = len(new_pending_queue) + 1
+
             try:
                 upload_session = self.upload_service.store_source_message(manifest, received_at=timestamp)
                 manifest["state"] = upload_session.state
@@ -1826,12 +1946,29 @@ class LocalStateStore:
             }
             self._write_json(self.message_index_path(line_message_id), message_index)
 
-        session_pointer = {
-            "workflow_session_id": workflow_session_id,
-            "latest_source_message_id": locals().get("session_pointer_source_message_id", source_message_id),
-            "source_type": source_type,
-            "updated_at": timestamp,
-        }
+        if source_type == "image":
+            session_pointer = {
+                "workflow_session_id": workflow_session_id,
+                "latest_source_message_id": source_message_id,
+                "active_review_source_message_id": locals().get("new_active_review_id", source_message_id),
+                "pending_review_queue": locals().get("new_pending_queue", []),
+                "total_received_count": locals().get("new_total", 1),
+                "completed_review_count": int((locals().get("existing_session_pointer") or {}).get("completed_review_count") or 0),
+                "source_type": source_type,
+                "updated_at": timestamp,
+            }
+        else:
+            existing_sp = self.read_session_pointer(workflow_session_id) or {}
+            session_pointer = {
+                "workflow_session_id": workflow_session_id,
+                "latest_source_message_id": locals().get("session_pointer_source_message_id", source_message_id),
+                "active_review_source_message_id": existing_sp.get("active_review_source_message_id"),
+                "pending_review_queue": existing_sp.get("pending_review_queue", []),
+                "total_received_count": existing_sp.get("total_received_count", 0),
+                "completed_review_count": existing_sp.get("completed_review_count", 0),
+                "source_type": source_type,
+                "updated_at": timestamp,
+            }
         self._write_json(self.session_pointer_path(workflow_session_id), session_pointer)
         self._maybe_send_image_acknowledgment(manifest)
         self._maybe_send_approval_acknowledgment(manifest)

@@ -61,24 +61,29 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def safe_id(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_")
+    return cleaned or "unknown"
+
+
 def draft_revision_key(source_message_id: str, revision: int) -> str:
-    return f"drafts/{source_message_id}/revision-{revision}.json"
+    return f"messages/{source_message_id}/draft_r{revision}.json"
 
 
 def draft_latest_key(source_message_id: str) -> str:
-    return f"drafts/{source_message_id}/latest.json"
+    return f"messages/{source_message_id}/draft_latest.json"
 
 
 def approval_revision_key(source_message_id: str, revision: int) -> str:
-    return f"approvals/{source_message_id}/revision-{revision}.json"
+    return f"messages/{source_message_id}/approval_r{revision}.json"
 
 
 def approval_latest_key(source_message_id: str) -> str:
-    return f"approvals/{source_message_id}/latest.json"
+    return f"messages/{source_message_id}/approval_latest.json"
 
 
 def source_manifest_key(source_message_id: str) -> str:
-    return f"manifests/source-messages/{source_message_id}.json"
+    return f"messages/{source_message_id}/manifest.json"
 
 
 def is_missing_key_error(exc: Exception) -> bool:
@@ -121,11 +126,24 @@ def build_config() -> WorkerConfig:
     )
 
 
+def source_message_id_from_ocr_job_id(ocr_job_id: str) -> str:
+    cleaned = ocr_job_id
+    if cleaned.startswith("ocr_"):
+        cleaned = cleaned[4:]
+    if not cleaned.startswith("src_"):
+        cleaned = f"src_{cleaned}"
+    return cleaned
+
+
 def manifest_key_for_job(ocr_job_id: str) -> str:
-    return f"manifests/ocr-jobs/{ocr_job_id}.json"
+    src_id = source_message_id_from_ocr_job_id(ocr_job_id)
+    return f"messages/{src_id}/ocr_job.json"
 
 
 def ocr_job_id_from_manifest_key(manifest_key: str) -> str:
+    parts = manifest_key.split("/")
+    if len(parts) >= 2 and parts[-1] == "ocr_job.json":
+        return f"ocr_{parts[-2]}"
     return manifest_key.rsplit("/", 1)[-1].removesuffix(".json")
 
 
@@ -1150,15 +1168,26 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
                 source_manifest["current_approval_key"] = approval_key
             write_json_object(s3_client, bucket=downloaded_job.manifest_bucket, key=source_manifest_path, payload=source_manifest)
 
-        approval_prompt = maybe_send_approval_prompt(
-            s3_client=s3_client,
-            bucket=downloaded_job.manifest_bucket,
-            source_manifest_path=source_manifest_path,
-            source_manifest=source_manifest,
-            draft_manifest=draft_manifest,
-            config=config,
-            timestamp=timestamp,
+        session_pointer_key = with_s3_prefix(
+            f"sessions/{safe_id(downloaded_job.workflow_session_id)}/latest.json",
+            prefix=config.s3_prefix,
         )
+        session_pointer = read_json_object_if_exists(s3_client, bucket=downloaded_job.manifest_bucket, key=session_pointer_key)
+        active_review_id = str((session_pointer or {}).get("active_review_source_message_id") or "").strip()
+        is_active_review = (active_review_id == downloaded_job.source_message_id) or not active_review_id
+
+        if is_active_review:
+            approval_prompt = maybe_send_approval_prompt(
+                s3_client=s3_client,
+                bucket=downloaded_job.manifest_bucket,
+                source_manifest_path=source_manifest_path,
+                source_manifest=source_manifest,
+                draft_manifest=draft_manifest,
+                config=config,
+                timestamp=timestamp,
+            )
+        else:
+            approval_prompt = {"status": "deferred", "reason": "not_active_review", "active_review_id": active_review_id}
 
         return {
             "service": "ocr-worker",

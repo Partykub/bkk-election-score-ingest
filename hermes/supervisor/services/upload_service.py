@@ -15,7 +15,7 @@ def safe_id(value: str) -> str:
 
 
 def object_key_for(*, source_message_id: str, received_at: str) -> str:
-    return f"inbound/{source_message_id}/original.bin"
+    return f"messages/{source_message_id}/original.bin"
 
 
 def build_metadata_payload(manifest: dict[str, Any], *, upload_session_id: str, received_at: str, storage_backend: str) -> dict[str, Any]:
@@ -77,8 +77,8 @@ class LocalMockUploadService:
         source_message_id = manifest["source_message_id"]
         upload_session_id = f"upl_{safe_id(source_message_id)}"
         object_key = object_key_for(source_message_id=source_message_id, received_at=received_at)
-        metadata_key = object_key.replace("/original.bin", "/metadata.json")
-        source_message_manifest_key = f"manifests/source-messages/{source_message_id}.json"
+        metadata_key = object_key.replace("/original.bin", "/upload_metadata.json")
+        source_message_manifest_key = f"messages/{source_message_id}/manifest.json"
 
         metadata = build_metadata_payload(
             manifest,
@@ -147,8 +147,8 @@ class S3UploadService:
         source_message_id = manifest["source_message_id"]
         upload_session_id = f"upl_{safe_id(source_message_id)}"
         object_key = self._with_prefix(object_key_for(source_message_id=source_message_id, received_at=received_at))
-        metadata_key = object_key.replace("/original.bin", "/metadata.json")
-        source_message_manifest_key = self._with_prefix(f"manifests/source-messages/{source_message_id}.json")
+        metadata_key = object_key.replace("/original.bin", "/upload_metadata.json")
+        source_message_manifest_key = self._with_prefix(f"messages/{source_message_id}/manifest.json")
         metadata = build_metadata_payload(
             manifest,
             upload_session_id=upload_session_id,

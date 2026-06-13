@@ -1,0 +1,232 @@
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 5766)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+line relay: unable to process intake payload: An error occurred (NoSuchBucket) when calling the GetObject operation: The specified bucket does not exist
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 53531)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 53533)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 48784)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 48802)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 48731)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 48737)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 18535)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 50369)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 50375)
+Traceback (most recent call last):
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+  File "C:\Program Files\Python311\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 448, in do_POST
+    self._send_json(HTTPStatus.OK, response_payload)
+  File "D:\ch7\election\hermes\supervisor\services\line_webhook_relay.py", line 469, in _send_json
+    self.wfile.write(body)
+  File "C:\Program Files\Python311\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------

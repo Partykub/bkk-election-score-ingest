@@ -83,8 +83,8 @@ class _RecordingUrlOpen:
 
 class QueueEnvelopeTests(unittest.TestCase):
     def test_with_s3_prefix_prepends_only_when_needed(self):
-        self.assertEqual(with_s3_prefix("manifests/ocr-jobs/a.json", prefix="api-data/score"), "api-data/score/manifests/ocr-jobs/a.json")
-        self.assertEqual(with_s3_prefix("api-data/score/manifests/ocr-jobs/a.json", prefix="api-data/score"), "api-data/score/manifests/ocr-jobs/a.json")
+        self.assertEqual(with_s3_prefix("messages/a/ocr_job.json", prefix="api-data/score"), "api-data/score/messages/a/ocr_job.json")
+        self.assertEqual(with_s3_prefix("api-data/score/messages/a/ocr_job.json", prefix="api-data/score"), "api-data/score/messages/a/ocr_job.json")
 
     def test_parse_queue_envelope_accepts_raw_job_id(self):
         envelope = parse_queue_envelope("ocr_20260609_0001", default_bucket="bucket-a")
@@ -149,12 +149,12 @@ class WorkerProcessingTests(unittest.TestCase):
                         "source_message_id": "src_20260609_0003",
                         "input": {
                             "bucket": "bucket-a",
-                            "key": "inbound/src_20260609_0003/original.bin",
+                            "key": "messages/src_20260609_0003/original.bin",
                             "content_type": "image/jpeg",
                         },
                     }
                 ).encode("utf-8"),
-                ("bucket-a", "api-data/score/inbound/src_20260609_0003/original.bin"): (b"image-bytes", "image/jpeg"),
+                ("bucket-a", "api-data/score/messages/src_20260609_0003/original.bin"): (b"image-bytes", "image/jpeg"),
             }
         )
         message = {
@@ -168,8 +168,8 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(downloaded_job.ocr_job_id, "ocr_20260609_0003")
         self.assertEqual(downloaded_job.source_message_id, "src_20260609_0003")
         self.assertEqual(downloaded_job.workflow_session_id, "")
-        self.assertEqual(downloaded_job.manifest_key, "api-data/score/manifests/ocr-jobs/ocr_20260609_0003.json")
-        self.assertEqual(downloaded_job.input_key, "api-data/score/inbound/src_20260609_0003/original.bin")
+        self.assertEqual(downloaded_job.manifest_key, "api-data/score/messages/src_20260609_0003/ocr_job.json")
+        self.assertEqual(downloaded_job.input_key, "api-data/score/messages/src_20260609_0003/original.bin")
         self.assertEqual(downloaded_job.input_size_bytes, len(b"image-bytes"))
         self.assertEqual(downloaded_job.input_content_type, "image/jpeg")
         self.assertEqual(downloaded_job.queue_message_id, "msg-1")
@@ -185,11 +185,11 @@ class WorkerProcessingTests(unittest.TestCase):
                         "source_message_id": "src_20260609_0004",
                         "input": {
                             "bucket": "bucket-a",
-                            "key": "inbound/src_20260609_0004/original.bin",
+                            "key": "messages/src_20260609_0004/original.bin",
                         },
                     }
                 ).encode("utf-8"),
-                ("bucket-a", "api-data/score/inbound/src_20260609_0004/original.bin"): (b"binary-data", "application/octet-stream"),
+                ("bucket-a", "api-data/score/messages/src_20260609_0004/original.bin"): (b"binary-data", "application/octet-stream"),
             }
         )
         queue_client = _FakeSqsClient(
@@ -217,19 +217,19 @@ class WorkerProcessingTests(unittest.TestCase):
                 "Body": json.dumps({
                     "ocr_job_id": "ocr_20260609_0004",
                     "manifest_bucket": "bucket-a",
-                    "manifest_key": "manifests/ocr-jobs/ocr_20260609_0004.json",
+                    "manifest_key": "messages/src_20260609_0004/ocr_job.json",
                 }),
             },
             s3_client=_FakeS3Client(
                 {
-                    ("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260609_0004.json"): json.dumps(
+                    ("bucket-a", "api-data/score/messages/src_20260609_0004/ocr_job.json"): json.dumps(
                         {
                             "ocr_job_id": "ocr_20260609_0004",
                             "source_message_id": "src_20260609_0004",
-                            "input": {"bucket": "bucket-a", "key": "inbound/src_20260609_0004/original.bin"},
+                            "input": {"bucket": "bucket-a", "key": "messages/src_20260609_0004/original.bin"},
                         }
                     ).encode("utf-8"),
-                    ("bucket-a", "api-data/score/inbound/src_20260609_0004/original.bin"): (b"binary-data", "application/octet-stream"),
+                    ("bucket-a", "api-data/score/messages/src_20260609_0004/original.bin"): (b"binary-data", "application/octet-stream"),
                 }
             ),
             config=self.config,
@@ -273,9 +273,9 @@ class WorkerProcessingTests(unittest.TestCase):
             source_message_id="src_20260610_0009",
             workflow_session_id="line_user_U123",
             manifest_bucket="bucket-a",
-            manifest_key="api-data/score/manifests/ocr-jobs/ocr_20260610_0009.json",
+            manifest_key="api-data/score/messages/src_20260610_0009/ocr_job.json",
             input_bucket="bucket-a",
-            input_key="api-data/score/inbound/src_20260610_0009/original.bin",
+            input_key="api-data/score/messages/src_20260610_0009/original.bin",
             input_size_bytes=8,
             input_content_type="image/jpeg",
             queue_message_id="msg-9",
@@ -306,9 +306,9 @@ class WorkerProcessingTests(unittest.TestCase):
             source_message_id="src_20260610_0001",
             workflow_session_id="line_user_U123",
             manifest_bucket="bucket-a",
-            manifest_key="api-data/score/manifests/ocr-jobs/ocr_20260610_0001.json",
+            manifest_key="api-data/score/messages/src_20260610_0001/ocr_job.json",
             input_bucket="bucket-a",
-            input_key="api-data/score/inbound/src_20260610_0001/original.bin",
+            input_key="api-data/score/messages/src_20260610_0001/original.bin",
             input_size_bytes=123,
             input_content_type="image/jpeg",
             queue_message_id="msg-1",
@@ -385,7 +385,7 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(payload["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
 
     def test_maybe_send_approval_prompt_updates_source_manifest_after_push(self):
-        source_manifest_path = "api-data/score/manifests/source-messages/src_20260609_0004.json"
+        source_manifest_path = "api-data/score/messages/src_20260609_0004/manifest.json"
         source_manifest = {
             "source_message_id": "src_20260609_0004",
             "sender_user_id": "U123",
@@ -437,15 +437,15 @@ class WorkerProcessingTests(unittest.TestCase):
             },
             s3_client=_FakeS3Client(
                 {
-                    ("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260609_0005.json"): json.dumps(
+                    ("bucket-a", "api-data/score/messages/src_20260609_0005/ocr_job.json"): json.dumps(
                         {
                             "ocr_job_id": "ocr_20260609_0005",
                             "source_message_id": "src_20260609_0005",
                             "workflow_session_id": "line_user_U123",
-                            "input": {"bucket": "bucket-a", "key": "inbound/src_20260609_0005/original.bin"},
+                            "input": {"bucket": "bucket-a", "key": "messages/src_20260609_0005/original.bin"},
                         }
                     ).encode("utf-8"),
-                    ("bucket-a", "api-data/score/inbound/src_20260609_0005/original.bin"): (b"binary-data", "application/octet-stream"),
+                    ("bucket-a", "api-data/score/messages/src_20260609_0005/original.bin"): (b"binary-data", "application/octet-stream"),
                 }
             ),
             config=self.config,
@@ -459,7 +459,7 @@ class WorkerProcessingTests(unittest.TestCase):
         )
 
         self.assertEqual(approval_id, "approval_src_20260609_0005_r2")
-        self.assertEqual(approval_key, "approvals/src_20260609_0005/revision-2.json")
+        self.assertEqual(approval_key, "messages/src_20260609_0005/approval_r2.json")
         self.assertEqual(approval_manifest["draft_revision"], 2)
         self.assertEqual(approval_pointer["approval_id"], approval_id)
 
@@ -473,15 +473,15 @@ class WorkerProcessingTests(unittest.TestCase):
             },
             s3_client=_FakeS3Client(
                 {
-                    ("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260609_0006.json"): json.dumps(
+                    ("bucket-a", "api-data/score/messages/src_20260609_0006/ocr_job.json"): json.dumps(
                         {
                             "ocr_job_id": "ocr_20260609_0006",
                             "source_message_id": "src_20260609_0006",
                             "workflow_session_id": "line_user_U456",
-                            "input": {"bucket": "bucket-a", "key": "inbound/src_20260609_0006/original.bin"},
+                            "input": {"bucket": "bucket-a", "key": "messages/src_20260609_0006/original.bin"},
                         }
                     ).encode("utf-8"),
-                    ("bucket-a", "api-data/score/inbound/src_20260609_0006/original.bin"): (b"binary-data", "application/octet-stream"),
+                    ("bucket-a", "api-data/score/messages/src_20260609_0006/original.bin"): (b"binary-data", "application/octet-stream"),
                 }
             ),
             config=self.config,
@@ -499,8 +499,8 @@ class WorkerProcessingTests(unittest.TestCase):
 
         self.assertEqual(approval_id, "approval_src_20260609_0006_r1")
         self.assertEqual(approval_manifest["requested_from_user_id"], "U456")
-        self.assertEqual(approval_key, "api-data/score/approvals/src_20260609_0006/revision-1.json")
-        self.assertIn(("bucket-a", "api-data/score/approvals/src_20260609_0006/latest.json"), s3_client.objects)
+        self.assertEqual(approval_key, "api-data/score/messages/src_20260609_0006/approval_r1.json")
+        self.assertIn(("bucket-a", "api-data/score/messages/src_20260609_0006/approval_latest.json"), s3_client.objects)
 
     def test_process_downloaded_job_creates_approval_artifacts_on_first_completion(self):
         config = WorkerConfig(
@@ -523,7 +523,7 @@ class WorkerProcessingTests(unittest.TestCase):
             {
                 (
                     "bucket-a",
-                    "api-data/score/manifests/ocr-jobs/ocr_20260609_0007.json",
+                    "api-data/score/messages/src_20260609_0007/ocr_job.json",
                 ): json.dumps(
                     {
                         "ocr_job_id": "ocr_20260609_0007",
@@ -532,18 +532,18 @@ class WorkerProcessingTests(unittest.TestCase):
                         "state": "queued",
                         "input": {
                             "bucket": "bucket-a",
-                            "key": "inbound/src_20260609_0007/original.bin",
+                            "key": "messages/src_20260609_0007/original.bin",
                         },
                         "ocr_options": {"prompt_version": "ocr-v1"},
                     }
                 ).encode("utf-8"),
                 (
                     "bucket-a",
-                    "api-data/score/inbound/src_20260609_0007/original.bin",
+                    "api-data/score/messages/src_20260609_0007/original.bin",
                 ): (b"binary-data", "image/jpeg"),
                 (
                     "bucket-a",
-                    "api-data/score/manifests/source-messages/src_20260609_0007.json",
+                    "api-data/score/messages/src_20260609_0007/manifest.json",
                 ): json.dumps(
                     {
                         "source_message_id": "src_20260609_0007",
@@ -589,18 +589,18 @@ class WorkerProcessingTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
         updated_source_manifest = json.loads(
-            s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_20260609_0007.json")].decode("utf-8")
+            s3_client.objects[("bucket-a", "api-data/score/messages/src_20260609_0007/manifest.json")].decode("utf-8")
         )
         self.assertEqual(updated_source_manifest["state"], "awaiting_approval")
         self.assertEqual(updated_source_manifest["current_approval_id"], "approval_src_20260609_0007_r1")
-        self.assertIn(("bucket-a", "api-data/score/approvals/src_20260609_0007/latest.json"), s3_client.objects)
+        self.assertIn(("bucket-a", "api-data/score/messages/src_20260609_0007/approval_latest.json"), s3_client.objects)
 
     def test_process_downloaded_job_keeps_queue_message_for_retryable_ocr_failure(self):
         s3_client = _FakeS3Client(
             {
                 (
                     "bucket-a",
-                    "api-data/score/manifests/ocr-jobs/ocr_20260611_0001.json",
+                    "api-data/score/messages/src_20260611_0001/ocr_job.json",
                 ): json.dumps(
                     {
                         "ocr_job_id": "ocr_20260611_0001",
@@ -611,18 +611,18 @@ class WorkerProcessingTests(unittest.TestCase):
                         "attempt_count": 0,
                         "input": {
                             "bucket": "bucket-a",
-                            "key": "inbound/src_20260611_0001/original.bin",
+                            "key": "messages/src_20260611_0001/original.bin",
                         },
                         "ocr_options": {"prompt_version": "ocr-v1"},
                     }
                 ).encode("utf-8"),
                 (
                     "bucket-a",
-                    "api-data/score/inbound/src_20260611_0001/original.bin",
+                    "api-data/score/messages/src_20260611_0001/original.bin",
                 ): (b"binary-data", "image/jpeg"),
                 (
                     "bucket-a",
-                    "api-data/score/manifests/source-messages/src_20260611_0001.json",
+                    "api-data/score/messages/src_20260611_0001/manifest.json",
                 ): json.dumps(
                     {
                         "source_message_id": "src_20260611_0001",
@@ -652,10 +652,10 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(result["status"], "retry_pending")
         self.assertFalse(should_acknowledge_result(result))
         updated_job_manifest = json.loads(
-            s3_client.objects[("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260611_0001.json")].decode("utf-8")
+            s3_client.objects[("bucket-a", "api-data/score/messages/src_20260611_0001/ocr_job.json")].decode("utf-8")
         )
         updated_source_manifest = json.loads(
-            s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_20260611_0001.json")].decode("utf-8")
+            s3_client.objects[("bucket-a", "api-data/score/messages/src_20260611_0001/manifest.json")].decode("utf-8")
         )
         self.assertEqual(updated_job_manifest["state"], "queued")
         self.assertTrue(updated_job_manifest["error"]["retryable"])
@@ -667,7 +667,7 @@ class WorkerProcessingTests(unittest.TestCase):
             {
                 (
                     "bucket-a",
-                    "api-data/score/manifests/ocr-jobs/ocr_20260611_0002.json",
+                    "api-data/score/messages/src_20260611_0002/ocr_job.json",
                 ): json.dumps(
                     {
                         "ocr_job_id": "ocr_20260611_0002",
@@ -678,18 +678,18 @@ class WorkerProcessingTests(unittest.TestCase):
                         "attempt_count": 0,
                         "input": {
                             "bucket": "bucket-a",
-                            "key": "inbound/src_20260611_0002/original.bin",
+                            "key": "messages/src_20260611_0002/original.bin",
                         },
                         "ocr_options": {"prompt_version": "ocr-v1"},
                     }
                 ).encode("utf-8"),
                 (
                     "bucket-a",
-                    "api-data/score/inbound/src_20260611_0002/original.bin",
+                    "api-data/score/messages/src_20260611_0002/original.bin",
                 ): (b"binary-data", "image/jpeg"),
                 (
                     "bucket-a",
-                    "api-data/score/manifests/source-messages/src_20260611_0002.json",
+                    "api-data/score/messages/src_20260611_0002/manifest.json",
                 ): json.dumps(
                     {
                         "source_message_id": "src_20260611_0002",
@@ -718,10 +718,10 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertTrue(should_acknowledge_result(result))
         updated_job_manifest = json.loads(
-            s3_client.objects[("bucket-a", "api-data/score/manifests/ocr-jobs/ocr_20260611_0002.json")].decode("utf-8")
+            s3_client.objects[("bucket-a", "api-data/score/messages/src_20260611_0002/ocr_job.json")].decode("utf-8")
         )
         updated_source_manifest = json.loads(
-            s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_20260611_0002.json")].decode("utf-8")
+            s3_client.objects[("bucket-a", "api-data/score/messages/src_20260611_0002/manifest.json")].decode("utf-8")
         )
         self.assertEqual(updated_job_manifest["state"], "failed")
         self.assertEqual(updated_source_manifest["state"], "exception")
@@ -730,7 +730,7 @@ class WorkerProcessingTests(unittest.TestCase):
 
 
     def test_maybe_send_approval_prompt_uses_message_action(self):
-        source_manifest_path = "api-data/score/manifests/source-messages/src_20260609_0004.json"
+        source_manifest_path = "api-data/score/messages/src_20260609_0004/manifest.json"
         source_manifest = {
             "source_message_id": "src_20260609_0004",
             "sender_user_id": "U123",

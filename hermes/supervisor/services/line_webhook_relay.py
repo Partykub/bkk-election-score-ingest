@@ -417,7 +417,7 @@ def make_handler(
                 self._send_json(HTTPStatus.OK, response_payload)
                 return
 
-            if self.path != "/line/webhook":
+            if self.path not in {"/line/webhook", "/webhook"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 

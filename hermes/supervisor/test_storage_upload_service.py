@@ -93,9 +93,9 @@ class UploadServiceTests(unittest.TestCase):
 
         self.assertEqual(session.storage_backend, "s3")
         self.assertEqual(session.bucket, "election-system")
-        self.assertEqual(session.object_key, "dev/inbound/src_test_0001/original.bin")
+        self.assertEqual(session.object_key, "dev/messages/src_test_0001/original.bin")
         self.assertEqual(client.requests[0]["Bucket"], "election-system")
-        self.assertEqual(client.requests[0]["Key"], "dev/inbound/src_test_0001/metadata.json")
+        self.assertEqual(client.requests[0]["Key"], "dev/messages/src_test_0001/upload_metadata.json")
         metadata = json.loads(client.requests[0]["Body"].decode("utf-8"))
         self.assertEqual(metadata["storage_backend"], "s3")
         self.assertEqual(metadata["binary_status"], "pending_line_content_fetch")
@@ -122,10 +122,10 @@ class UploadServiceTests(unittest.TestCase):
             received_at="2026-06-09T06:30:00Z",
         )
 
-        self.assertEqual(session.object_key, "dev/inbound/src_test_0002/original.bin")
-        self.assertEqual(client.requests[0]["Key"], "dev/inbound/src_test_0002/original.bin")
+        self.assertEqual(session.object_key, "dev/messages/src_test_0002/original.bin")
+        self.assertEqual(client.requests[0]["Key"], "dev/messages/src_test_0002/original.bin")
         self.assertEqual(client.requests[0]["Body"], b"fake-image-bytes")
-        self.assertEqual(client.requests[1]["Key"], "dev/inbound/src_test_0002/metadata.json")
+        self.assertEqual(client.requests[1]["Key"], "dev/messages/src_test_0002/upload_metadata.json")
         metadata = json.loads(client.requests[1]["Body"].decode("utf-8"))
         self.assertEqual(metadata["binary_status"], "stored")
         self.assertEqual(metadata["size_bytes"], len(b"fake-image-bytes"))

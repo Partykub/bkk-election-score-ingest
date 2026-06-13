@@ -94,14 +94,14 @@ class UpdateWorkerTests(unittest.TestCase):
         os.environ.update(self._original_env)
 
     def test_manifest_key_for_job(self) -> None:
-        self.assertEqual(manifest_key_for_job("upd_123"), "updates/jobs/upd_123.json")
+        self.assertEqual(manifest_key_for_job("upd_123"), "messages/123/update_job.json")
 
     def test_with_s3_prefix_prepends_only_when_needed(self) -> None:
-        self.assertEqual(with_s3_prefix("updates/jobs/upd_123.json", prefix="api-data/score"), "api-data/score/updates/jobs/upd_123.json")
-        self.assertEqual(with_s3_prefix("api-data/score/updates/jobs/upd_123.json", prefix="api-data/score"), "api-data/score/updates/jobs/upd_123.json")
+        self.assertEqual(with_s3_prefix("messages/123/update_job.json", prefix="api-data/score"), "api-data/score/messages/123/update_job.json")
+        self.assertEqual(with_s3_prefix("api-data/score/messages/123/update_job.json", prefix="api-data/score"), "api-data/score/messages/123/update_job.json")
 
     def test_update_job_id_from_manifest_key(self) -> None:
-        self.assertEqual(update_job_id_from_manifest_key("updates/jobs/upd_123.json"), "upd_123")
+        self.assertEqual(update_job_id_from_manifest_key("messages/123/update_job.json"), "upd_123")
 
     def test_parse_queue_envelope_from_string_uses_default_bucket(self) -> None:
         envelope = parse_queue_envelope(json.dumps("upd_123"), default_bucket="bucket-a")
@@ -110,7 +110,7 @@ class UpdateWorkerTests(unittest.TestCase):
             QueueEnvelope(
                 update_job_id="upd_123",
                 manifest_bucket="bucket-a",
-                manifest_key="updates/jobs/upd_123.json",
+                manifest_key="messages/123/update_job.json",
             ),
         )
 
@@ -162,7 +162,7 @@ class UpdateWorkerTests(unittest.TestCase):
             {
                 (
                     "bucket-a",
-                    "api-data/score/updates/jobs/upd_123.json",
+                    "api-data/score/messages/123/update_job.json",
                 ): json.dumps(
                     {
                         "update_job_id": "upd_123",
@@ -176,7 +176,7 @@ class UpdateWorkerTests(unittest.TestCase):
             {
                 "MessageId": "msg-1",
                 "ReceiptHandle": "receipt-1",
-                "Body": json.dumps({"update_job_id": "upd_123", "manifest_bucket": "bucket-a", "manifest_key": "updates/jobs/upd_123.json"}),
+                "Body": json.dumps({"update_job_id": "upd_123", "manifest_bucket": "bucket-a", "manifest_key": "messages/123/update_job.json"}),
             },
             s3_client=s3_client,
             config=config,
@@ -184,7 +184,7 @@ class UpdateWorkerTests(unittest.TestCase):
 
         self.assertEqual(job.update_job_id, "upd_123")
         self.assertEqual(job.source_message_id, "src_123")
-        self.assertEqual(job.manifest_key, "api-data/score/updates/jobs/upd_123.json")
+        self.assertEqual(job.manifest_key, "api-data/score/messages/123/update_job.json")
 
     def test_poll_queue_once_returns_downloaded_jobs(self) -> None:
         os.environ["UPDATE_WORKER_QUEUE_URL"] = "https://example.com/update-jobs"
@@ -196,13 +196,13 @@ class UpdateWorkerTests(unittest.TestCase):
                 {
                     "MessageId": "msg-1",
                     "ReceiptHandle": "receipt-1",
-                    "Body": json.dumps({"update_job_id": "upd_123", "manifest_bucket": "bucket-a", "manifest_key": "updates/jobs/upd_123.json"}),
+                    "Body": json.dumps({"update_job_id": "upd_123", "manifest_bucket": "bucket-a", "manifest_key": "messages/123/update_job.json"}),
                 }
             ]
         )
         s3_client = _FakeS3Client(
             {
-                ("bucket-a", "api-data/score/updates/jobs/upd_123.json"): json.dumps(
+                ("bucket-a", "api-data/score/messages/123/update_job.json"): json.dumps(
                     {"update_job_id": "upd_123", "source_message_id": "src_123", "workflow_session_id": "line_user_U123"}
                 ).encode("utf-8")
             }
@@ -256,7 +256,7 @@ class UpdateWorkerTests(unittest.TestCase):
         config = build_config()
         s3_client = _FakeS3Client(
             {
-                ("bucket-a", "api-data/score/updates/jobs/upd_123.json"): json.dumps(
+                ("bucket-a", "api-data/score/messages/123/update_job.json"): json.dumps(
                     {
                         "update_job_id": "upd_123",
                         "source_message_id": "src_123",
@@ -268,7 +268,7 @@ class UpdateWorkerTests(unittest.TestCase):
                         "payload": {"candidate_scores": [{"candidate_number": 1, "score": 99}]},
                     }
                 ).encode("utf-8"),
-                ("bucket-a", "api-data/score/manifests/source-messages/src_123.json"): json.dumps(
+                ("bucket-a", "api-data/score/messages/src_123/manifest.json"): json.dumps(
                     {"source_message_id": "src_123", "state": "approved"}
                 ).encode("utf-8"),
             }
@@ -281,7 +281,7 @@ class UpdateWorkerTests(unittest.TestCase):
                 source_message_id="src_123",
                 workflow_session_id="line_user_U123",
                 manifest_bucket="bucket-a",
-                manifest_key="api-data/score/updates/jobs/upd_123.json",
+                manifest_key="api-data/score/messages/123/update_job.json",
                 queue_message_id="msg-1",
                 receipt_handle="receipt-1",
             ),
@@ -291,8 +291,8 @@ class UpdateWorkerTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "completed")
-        update_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/updates/jobs/upd_123.json")].decode("utf-8"))
-        source_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_123.json")].decode("utf-8"))
+        update_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/messages/123/update_job.json")].decode("utf-8"))
+        source_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/messages/src_123/manifest.json")].decode("utf-8"))
         self.assertEqual(update_manifest["state"], "completed")
         self.assertEqual(source_manifest["state"], "updated")
         self.assertEqual(source_manifest["current_update_job_id"], "upd_123")
@@ -302,7 +302,7 @@ class UpdateWorkerTests(unittest.TestCase):
         config = build_config()
         s3_client = _FakeS3Client(
             {
-                ("bucket-a", "api-data/score/updates/jobs/upd_456.json"): json.dumps(
+                ("bucket-a", "api-data/score/messages/456/update_job.json"): json.dumps(
                     {
                         "update_job_id": "upd_456",
                         "source_message_id": "src_456",
@@ -314,7 +314,7 @@ class UpdateWorkerTests(unittest.TestCase):
                         "payload": {"candidate_scores": [{"candidate_number": 1, "score": 101}]},
                     }
                 ).encode("utf-8"),
-                ("bucket-a", "api-data/score/manifests/source-messages/src_456.json"): json.dumps(
+                ("bucket-a", "api-data/score/messages/src_456/manifest.json"): json.dumps(
                     {"source_message_id": "src_456", "state": "approved"}
                 ).encode("utf-8"),
             }
@@ -326,7 +326,7 @@ class UpdateWorkerTests(unittest.TestCase):
                 source_message_id="src_456",
                 workflow_session_id="line_user_U456",
                 manifest_bucket="bucket-a",
-                manifest_key="api-data/score/updates/jobs/upd_456.json",
+                manifest_key="api-data/score/messages/456/update_job.json",
                 queue_message_id="msg-4",
                 receipt_handle="receipt-4",
             ),
@@ -335,8 +335,8 @@ class UpdateWorkerTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "completed")
-        update_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/updates/jobs/upd_456.json")].decode("utf-8"))
-        source_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/manifests/source-messages/src_456.json")].decode("utf-8"))
+        update_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/messages/456/update_job.json")].decode("utf-8"))
+        source_manifest = json.loads(s3_client.objects[("bucket-a", "api-data/score/messages/src_456/manifest.json")].decode("utf-8"))
         self.assertEqual(update_manifest["state"], "completed")
         self.assertEqual(update_manifest["result"]["mode"], "s3_only")
         self.assertEqual(source_manifest["state"], "approved")
@@ -355,7 +355,7 @@ class UpdateWorkerTests(unittest.TestCase):
                 source_message_id="src_123",
                 workflow_session_id="line_user_U123",
                 manifest_bucket="bucket-a",
-                manifest_key="updates/jobs/upd_123.json",
+                manifest_key="messages/123/update_job.json",
                 queue_message_id="msg-1",
                 receipt_handle="receipt-1",
             ),

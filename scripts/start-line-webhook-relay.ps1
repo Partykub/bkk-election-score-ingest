@@ -18,4 +18,4 @@ if ($Port -gt 0) {
 	$pythonArgs += @("--port", $Port.ToString())
 }
 
-python @pythonArgs
+& "C:\Program Files\Python311\python.exe" @pythonArgs

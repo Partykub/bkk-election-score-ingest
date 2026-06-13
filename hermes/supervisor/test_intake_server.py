@@ -73,9 +73,9 @@ class _FakeUploadSession:
     def __init__(self, storage_backend: str) -> None:
         self.upload_session_id = "upl_src_01JXIMAGE001"
         self.bucket = "election-system"
-        self.object_key = "inbound/src_01JXIMAGE001/original.bin"
-        self.metadata_key = "inbound/src_01JXIMAGE001/metadata.json"
-        self.source_message_manifest_key = "manifests/source-messages/src_01JXIMAGE001.json"
+        self.object_key = "messages/src_01JXIMAGE001/original.bin"
+        self.metadata_key = "messages/src_01JXIMAGE001/upload_metadata.json"
+        self.source_message_manifest_key = "messages/src_01JXIMAGE001/manifest.json"
         self.state = "stored"
         self.storage_backend = storage_backend
 
@@ -111,7 +111,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(result.source_type, "image")
         self.assertEqual(result.state, "stored")
 
-        manifest_path = Path(self.temp_dir.name) / "manifests" / "source-messages" / "src_01JXIMAGE001.json"
+        manifest_path = Path(self.temp_dir.name) / "messages" / "src_01JXIMAGE001" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["workflow_session_id"], "line_group_C123")
         self.assertEqual(manifest["state"], "stored")
@@ -121,19 +121,19 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(manifest["media"]["bucket"], "local-election-system")
         self.assertEqual(
             manifest["media"]["key"],
-            "inbound/src_01JXIMAGE001/original.bin",
+            "messages/src_01JXIMAGE001/original.bin",
         )
 
-        event_index_path = Path(self.temp_dir.name) / "indexes" / "by-line-event-id" / "01JXIMAGE001.json"
+        event_index_path = Path(self.temp_dir.name) / "events" / "01JXIMAGE001.json"
         self.assertTrue(event_index_path.exists())
 
-        metadata_path = Path(self.temp_dir.name) / "inbound" / "src_01JXIMAGE001" / "metadata.json"
+        metadata_path = Path(self.temp_dir.name) / "messages" / "src_01JXIMAGE001" / "upload_metadata.json"
         self.assertTrue(metadata_path.exists())
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         self.assertEqual(metadata["storage_backend"], "local-mock")
         self.assertEqual(metadata["binary_status"], "pending_line_content_fetch")
 
-        session_pointer = Path(self.temp_dir.name) / "indexes" / "by-session" / "line_group_C123" / "latest.json"
+        session_pointer = Path(self.temp_dir.name) / "sessions" / "line_group_C123" / "latest.json"
         session_payload = json.loads(session_pointer.read_text(encoding="utf-8"))
         self.assertEqual(session_payload["latest_source_message_id"], "src_01JXIMAGE001")
 
@@ -153,7 +153,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertTrue(duplicate_result.deduplicated)
         self.assertEqual(first_result.source_message_id, duplicate_result.source_message_id)
 
-        manifest_path = Path(self.temp_dir.name) / "manifests" / "source-messages" / "src_01JXDUP001.json"
+        manifest_path = Path(self.temp_dir.name) / "messages" / "src_01JXDUP001" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["created_at"], "2026-06-08T07:30:00Z")
         self.assertEqual(manifest["updated_at"], "2026-06-08T07:30:00Z")
@@ -170,7 +170,7 @@ class LocalStateStoreTests(unittest.TestCase):
         result = self.store.persist_line_event(event, received_at="2026-06-08T07:30:00Z")
 
         self.assertEqual(result.source_type, "approval_command")
-        manifest_path = Path(self.temp_dir.name) / "manifests" / "source-messages" / "src_01JXTEXT001.json"
+        manifest_path = Path(self.temp_dir.name) / "messages" / "src_01JXTEXT001" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["workflow_session_id"], "line_room_R999")
         self.assertEqual(manifest["source_text"], "ยืนยัน")
@@ -199,9 +199,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE777_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE777/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE777_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE777/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE777_r1",
@@ -225,10 +225,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE777.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE777/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE777/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -242,18 +242,18 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "approved")
-        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE777.json")].decode("utf-8"))
-        updated_approval = json.loads(s3_client.objects[("election-system", "dev/approvals/src_01JXIMAGE777/revision-1.json")].decode("utf-8"))
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777/manifest.json")].decode("utf-8"))
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777/approval_r1.json")].decode("utf-8"))
         self.assertEqual(updated_source["state"], "approved")
         self.assertTrue(updated_source["current_update_job_id"].startswith("upd_approval_src_01JXIMAGE777_r1"))
         self.assertEqual(updated_approval["state"], "approved")
         self.assertEqual(updated_approval["approved_by_user_id"], "U123")
-        self.assertIn(("election-system", "dev/updates/jobs/upd_approval_src_01JXIMAGE777_r1.json"), s3_client.objects)
+        self.assertIn(("election-system", "dev/messages/src_01JXIMAGE777/update_job.json"), s3_client.objects)
         self.assertEqual(len(queue_client.messages), 1)
         queue_payload = json.loads(queue_client.messages[0]["MessageBody"])
         self.assertEqual(queue_payload["update_job_id"], "upd_approval_src_01JXIMAGE777_r1")
         self.assertEqual(queue_payload["manifest_bucket"], "election-system")
-        self.assertEqual(queue_payload["manifest_key"], "dev/updates/jobs/upd_approval_src_01JXIMAGE777_r1.json")
+        self.assertEqual(queue_payload["manifest_key"], "dev/messages/src_01JXIMAGE777/update_job.json")
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("รับรองผลเรียบร้อยแล้ว", reply_sender.messages[0]["text"])
         self.assertIn("ผลร่างล่าสุด: ครั้งที่ 1", reply_sender.messages[0]["text"])
@@ -276,9 +276,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE888_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE888/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE888/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE888_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE888/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE888/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE888_r1",
@@ -298,10 +298,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE888.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE888/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE888/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -315,12 +315,12 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "awaiting_approval")
-        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE888.json")].decode("utf-8"))
-        updated_approval = json.loads(s3_client.objects[("election-system", "dev/approvals/src_01JXIMAGE888/revision-1.json")].decode("utf-8"))
-        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/drafts/src_01JXIMAGE888/revision-2.json")].decode("utf-8"))
-        latest_draft_pointer = json.loads(s3_client.objects[("election-system", "dev/drafts/src_01JXIMAGE888/latest.json")].decode("utf-8"))
-        next_approval = json.loads(s3_client.objects[("election-system", "dev/approvals/src_01JXIMAGE888/revision-2.json")].decode("utf-8"))
-        latest_approval_pointer = json.loads(s3_client.objects[("election-system", "dev/approvals/src_01JXIMAGE888/latest.json")].decode("utf-8"))
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/manifest.json")].decode("utf-8"))
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/approval_r1.json")].decode("utf-8"))
+        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/draft_r2.json")].decode("utf-8"))
+        latest_draft_pointer = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/draft_latest.json")].decode("utf-8"))
+        next_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/approval_r2.json")].decode("utf-8"))
+        latest_approval_pointer = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE888/approval_latest.json")].decode("utf-8"))
         self.assertEqual(updated_source["state"], "awaiting_approval")
         self.assertEqual(updated_approval["state"], "rejected")
         self.assertEqual(updated_approval["rejected_by_user_id"], "U123")
@@ -339,7 +339,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(push_sender.messages[0]["destination_id"], "U123")
         self.assertIn("ร่างครั้งที่ 2", push_sender.messages[0]["messages"][0]["text"])
         self.assertEqual(push_sender.messages[0]["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
-        self.assertNotIn(("election-system", "dev/updates/jobs/upd_approval_src_01JXIMAGE888_r1.json"), s3_client.objects)
+        self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE888/update_job.json"), s3_client.objects)
 
     def test_reject_command_replies_with_closed_round_message(self) -> None:
         s3_client = _RecordingS3Client()
@@ -357,9 +357,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE889_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE889/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE889/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE889_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE889/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE889/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE889_r1",
@@ -379,10 +379,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE889.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE889/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE889/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -412,9 +412,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE889_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE889/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE889/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE889_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE889/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE889/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE889_r1",
@@ -439,10 +439,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE889.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE889/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE889/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE889/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -456,7 +456,7 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "awaiting_approval")
-        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/drafts/src_01JXIMAGE889/revision-2.json")].decode("utf-8"))
+        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE889/draft_r2.json")].decode("utf-8"))
         self.assertEqual(corrected_draft["candidate_scores"][0]["score"], 121)
         self.assertEqual(corrected_draft["candidate_scores"][1]["score"], 98)
         self.assertEqual(corrected_draft["result_signature"], "77:1=121|2=98")
@@ -477,9 +477,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE890_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE890/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE890/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE890_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE890/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE890/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE890_r1",
@@ -500,10 +500,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE890.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE890/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE890/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -518,12 +518,12 @@ class LocalStateStoreTests(unittest.TestCase):
 
         self.assertEqual(result.state, "exception")
         self.assertEqual(result.source_message_id, "src_01JXCORRECT890")
-        correction_manifest = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXCORRECT890.json")].decode("utf-8"))
-        original_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE890.json")].decode("utf-8"))
+        correction_manifest = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXCORRECT890/manifest.json")].decode("utf-8"))
+        original_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE890/manifest.json")].decode("utf-8"))
         self.assertEqual(correction_manifest["exception"]["code"], "CORRECTION_PARSE_FAILED")
         self.assertEqual(original_source["state"], "awaiting_approval")
         self.assertEqual(original_source["pending_user_action"], "awaiting_correction_input")
-        self.assertNotIn(("election-system", "dev/drafts/src_01JXIMAGE890/revision-2.json"), s3_client.objects)
+        self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE890/draft_r2.json"), s3_client.objects)
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
         self.assertIsNone(reply_sender.messages[0]["messages"])
@@ -546,9 +546,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE890A_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE890A/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE890A/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE890A_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE890A/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE890A/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE890A_r1",
@@ -570,10 +570,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE890A.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE890A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE890A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890A/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890A/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890A/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         initial_result = store.persist_line_event(
             {
@@ -599,8 +599,8 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(override_result.state, "awaiting_approval")
-        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE890A.json")].decode("utf-8"))
-        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/drafts/src_01JXIMAGE890A/revision-2.json")].decode("utf-8"))
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE890A/manifest.json")].decode("utf-8"))
+        corrected_draft = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE890A/draft_r2.json")].decode("utf-8"))
         self.assertEqual(updated_source["current_draft_id"], "draft_src_01JXIMAGE890A_r2")
         self.assertIsNone(updated_source["pending_user_action"])
         self.assertEqual(corrected_draft["candidate_scores"][0]["score"], 16)
@@ -627,9 +627,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE890B_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE890B/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE890B/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE890B_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE890B/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE890B/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE890B_r1",
@@ -650,10 +650,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE890B.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE890B/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE890B/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890B/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890B/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE890B/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         store.persist_line_event(
             {
@@ -700,9 +700,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE892_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE892/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE892/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE892_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE892/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE892/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE892_r1",
@@ -723,10 +723,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE892.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE892/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE892/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -740,7 +740,7 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "received")
-        original_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE892.json")].decode("utf-8"))
+        original_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE892/manifest.json")].decode("utf-8"))
         self.assertEqual(original_source["state"], "awaiting_approval")
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
@@ -762,9 +762,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE893_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE893/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE893/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE893_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE893/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE893/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE893_r1",
@@ -785,10 +785,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE893.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE893/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE893/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE893/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE893/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE893/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -823,9 +823,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE894_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE894/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE894/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE894_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE894/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE894/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE894_r1",
@@ -846,10 +846,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE894.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE894/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE894/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE894/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE894/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE894/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -884,9 +884,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "approved",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE895_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE895/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE895/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE895_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE895/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE895/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE895_r1",
@@ -901,9 +901,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "approval_command",
             "updated_at": "2026-06-08T07:59:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE895.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE895/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE895/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE895/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -939,9 +939,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "approved",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE895A_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE895A/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE895A/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE895A_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE895A/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE895A/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE895A_r1",
@@ -956,9 +956,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "approval_command",
             "updated_at": "2026-06-08T07:59:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE895A.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE895A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE895A/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE895A/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -998,9 +998,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE891_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE891/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE891/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE891_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE891/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE891/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE891_r1",
@@ -1028,10 +1028,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE891.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE891/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE891/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE891/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE891/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE891/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         correction_result = store.persist_line_event(
             {
@@ -1057,8 +1057,8 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(approve_result.state, "approved")
-        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE891.json")].decode("utf-8"))
-        update_manifest = json.loads(s3_client.objects[("election-system", "dev/updates/jobs/upd_approval_src_01JXIMAGE891_r2.json")].decode("utf-8"))
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE891/manifest.json")].decode("utf-8"))
+        update_manifest = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE891/update_job.json")].decode("utf-8"))
         self.assertEqual(updated_source["state"], "approved")
         self.assertEqual(update_manifest["draft_id"], "draft_src_01JXIMAGE891_r2")
         self.assertEqual(update_manifest["payload"]["candidate_scores"][0]["score"], 121)
@@ -1087,9 +1087,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE892A_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE892A/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE892A/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE892A_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE892A/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE892A/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE892A_r1",
@@ -1110,10 +1110,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE892A.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE892A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE892A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892A/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892A/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE892A/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         enter_result = store.persist_line_event(
             {
@@ -1139,7 +1139,7 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(cancel_result.state, "received")
-        updated_source = json.loads(s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE892A.json")].decode("utf-8"))
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE892A/manifest.json")].decode("utf-8"))
         self.assertIsNone(updated_source.get("pending_user_action"))
         self.assertEqual(len(reply_sender.messages), 2)
         self.assertIn("เข้าสู่โหมดแก้ไขแล้ว", reply_sender.messages[0]["text"])
@@ -1155,7 +1155,7 @@ class LocalStateStoreTests(unittest.TestCase):
         )
         s3_client.put_object(
             Bucket="election-system",
-            Key="dev/indexes/by-session/line_user_U123/latest.json",
+            Key="dev/sessions/line_user_U123/latest.json",
             Body=json.dumps(
                 {
                     "workflow_session_id": "line_user_U123",
@@ -1178,7 +1178,7 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "received")
-        session_pointer = json.loads(s3_client.objects[("election-system", "dev/indexes/by-session/line_user_U123/latest.json")].decode("utf-8"))
+        session_pointer = json.loads(s3_client.objects[("election-system", "dev/sessions/line_user_U123/latest.json")].decode("utf-8"))
         self.assertEqual(session_pointer["latest_source_message_id"], "src_01JXIMAGE999")
 
     def test_general_text_without_active_approval_receives_free_chat_reply(self) -> None:
@@ -1261,13 +1261,13 @@ class LocalStateStoreTests(unittest.TestCase):
 
         self.assertEqual(result.state, "stored")
         manifest = json.loads(
-            s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE001.json")].decode("utf-8")
+            s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE001/manifest.json")].decode("utf-8")
         )
         self.assertEqual(manifest["media"]["bucket"], "election-system")
         self.assertEqual(manifest["media"]["storage_backend"], "s3")
-        self.assertIn(("election-system", "dev/indexes/by-line-event-id/01JXIMAGE001.json"), s3_client.objects)
-        self.assertIn(("election-system", "dev/indexes/by-line-message-id/548899112233.json"), s3_client.objects)
-        self.assertIn(("election-system", "dev/indexes/by-session/line_group_C123/latest.json"), s3_client.objects)
+        self.assertIn(("election-system", "dev/events/01JXIMAGE001.json"), s3_client.objects)
+        self.assertIn(("election-system", "dev/events/548899112233.json"), s3_client.objects)
+        self.assertIn(("election-system", "dev/sessions/line_group_C123/latest.json"), s3_client.objects)
 
         duplicate_result = store.persist_line_event(event, received_at="2026-06-08T07:31:00Z")
         self.assertTrue(duplicate_result.deduplicated)
@@ -1302,17 +1302,17 @@ class LocalStateStoreTests(unittest.TestCase):
 
         self.assertEqual(result.state, "queued")
         source_manifest = json.loads(
-            s3_client.objects[("election-system", "dev/manifests/source-messages/src_01JXIMAGE002.json")].decode("utf-8")
+            s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE002/manifest.json")].decode("utf-8")
         )
         self.assertEqual(source_manifest["state"], "queued")
         self.assertEqual(source_manifest["current_ocr_job_id"], "ocr_src_01JXIMAGE002")
 
         ocr_job_manifest = json.loads(
-            s3_client.objects[("election-system", "dev/manifests/ocr-jobs/ocr_src_01JXIMAGE002.json")].decode("utf-8")
+            s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE002/ocr_job.json")].decode("utf-8")
         )
         self.assertEqual(ocr_job_manifest["state"], "queued")
         self.assertEqual(ocr_job_manifest["input"]["bucket"], "election-system")
-        self.assertEqual(ocr_job_manifest["input"]["key"], "inbound/src_01JXIMAGE001/original.bin")
+        self.assertEqual(ocr_job_manifest["input"]["key"], "messages/src_01JXIMAGE001/original.bin")
 
         self.assertEqual(len(queue_client.messages), 1)
         queue_payload = json.loads(queue_client.messages[0]["MessageBody"])
@@ -1320,7 +1320,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(queue_payload["source_message_id"], "src_01JXIMAGE002")
         self.assertEqual(queue_payload["workflow_session_id"], "line_group_C123")
         self.assertEqual(queue_payload["manifest_bucket"], "election-system")
-        self.assertEqual(queue_payload["manifest_key"], "dev/manifests/ocr-jobs/ocr_src_01JXIMAGE002.json")
+        self.assertEqual(queue_payload["manifest_key"], "dev/messages/src_01JXIMAGE002/ocr_job.json")
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertEqual(reply_sender.messages[0]["reply_token"], "reply-token-2")
         self.assertEqual(
@@ -1381,9 +1381,9 @@ class LocalStateStoreTests(unittest.TestCase):
             "state": "awaiting_approval",
             "sender_user_id": "U123",
             "current_draft_id": "draft_src_01JXIMAGE888A_r1",
-            "current_draft_key": "dev/drafts/src_01JXIMAGE888A/revision-1.json",
+            "current_draft_key": "dev/messages/src_01JXIMAGE888A/draft_r1.json",
             "current_approval_id": "approval_src_01JXIMAGE888A_r1",
-            "current_approval_key": "dev/approvals/src_01JXIMAGE888A/revision-1.json",
+            "current_approval_key": "dev/messages/src_01JXIMAGE888A/approval_r1.json",
         }
         approval_manifest = {
             "approval_id": "approval_src_01JXIMAGE888A_r1",
@@ -1403,10 +1403,10 @@ class LocalStateStoreTests(unittest.TestCase):
             "source_type": "image",
             "updated_at": "2026-06-08T07:29:00Z",
         }
-        s3_client.put_object(Bucket="election-system", Key="dev/manifests/source-messages/src_01JXIMAGE888A.json", Body=json.dumps(source_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/approvals/src_01JXIMAGE888A/revision-1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/drafts/src_01JXIMAGE888A/revision-1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
-        s3_client.put_object(Bucket="election-system", Key="dev/indexes/by-session/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888A/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888A/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE888A/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
 
         result = store.persist_line_event(
             {
@@ -1423,6 +1423,246 @@ class LocalStateStoreTests(unittest.TestCase):
         correction_action = push_sender.messages[0]["messages"][0]["quickReply"]["items"][1]["action"]
         self.assertEqual(correction_action["type"], "message")
         self.assertEqual(correction_action["text"], "แก้ไข")
+
+
+class ReviewQueueTests(unittest.TestCase):
+    """Tests for the Sequential Review Queue feature (multi-image support)."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.reply_sender = _RecordingReplySender()
+        self.push_sender = _RecordingPushSender()
+        self.s3_client = _RecordingS3Client()
+        self.queue_client = _RecordingQueueClient()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=self.s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=self.queue_client,
+        )
+        self.store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            line_reply_sender=self.reply_sender,
+            line_push_sender=self.push_sender,
+            update_job_queue=update_job_queue,
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _make_image_event(self, event_id: str, group_id: str = "CGRP_MULTI", user_id: str = "U_MULTI") -> dict:
+        return {
+            "type": "message",
+            "webhookEventId": event_id,
+            "replyToken": f"reply-{event_id}",
+            "source": {"type": "group", "groupId": group_id, "userId": user_id},
+            "message": {"id": f"msg_{event_id}", "type": "image"},
+        }
+
+    def _make_approval_event(self, event_id: str, text: str = "ยืนยัน", group_id: str = "CGRP_MULTI", user_id: str = "U_MULTI") -> dict:
+        return {
+            "type": "message",
+            "webhookEventId": event_id,
+            "replyToken": f"reply-{event_id}",
+            "source": {"type": "group", "groupId": group_id, "userId": user_id},
+            "message": {"id": f"msg_{event_id}", "type": "text", "text": text},
+        }
+
+    def _read_session_pointer(self, session_id: str = "line_group_CGRP_MULTI") -> dict:
+        key = ("election-system", f"dev/sessions/{session_id}/latest.json")
+        if key not in self.s3_client.objects:
+            return {}
+        return json.loads(self.s3_client.objects[key].decode("utf-8"))
+
+    def _setup_awaiting_approval(self, source_message_id: str, session_id: str = "line_group_CGRP_MULTI") -> None:
+        """Simulate OCR completing for a source message by creating draft + approval artifacts."""
+        draft_manifest = {
+            "draft_id": f"draft_{source_message_id}_r1",
+            "revision": 1,
+            "report_type": "election_score_sheet",
+            "area_id": "5",
+            "polling_unit_id": "12",
+            "candidate_scores": [{"candidate_number": 1, "score": 100}, {"candidate_number": 2, "score": 200}],
+            "result_signature": "5:1=100|2=200",
+        }
+        approval_manifest = {
+            "approval_id": f"approval_{source_message_id}_r1",
+            "draft_id": f"draft_{source_message_id}_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U_MULTI",
+            "state": "awaiting_approval",
+        }
+        source_manifest_path = Path(self.temp_dir.name) / "messages" / source_message_id / "manifest.json"
+        if source_manifest_path.exists():
+            source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+        else:
+            source_manifest = {"source_message_id": source_message_id, "workflow_session_id": session_id}
+        source_manifest["state"] = "awaiting_approval"
+        source_manifest["sender_user_id"] = "U_MULTI"
+        source_manifest["sender_group_id"] = "CGRP_MULTI"
+        source_manifest["current_draft_id"] = f"draft_{source_message_id}_r1"
+        source_manifest["current_draft_key"] = f"dev/messages/{source_message_id}/draft_r1.json"
+        source_manifest["current_approval_id"] = f"approval_{source_message_id}_r1"
+        source_manifest["current_approval_key"] = f"dev/messages/{source_message_id}/approval_r1.json"
+        source_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        source_manifest_path.write_text(json.dumps(source_manifest, ensure_ascii=False), encoding="utf-8")
+
+        self.s3_client.put_object(Bucket="election-system", Key=f"dev/messages/{source_message_id}/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        self.s3_client.put_object(Bucket="election-system", Key=f"dev/messages/{source_message_id}/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        self.s3_client.put_object(Bucket="election-system", Key=f"dev/messages/{source_message_id}/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+
+    def test_three_images_build_sequential_review_queue(self) -> None:
+        """Sending 3 images should set the first as active_review and queue the other 2."""
+        r1 = self.store.persist_line_event(self._make_image_event("IMG_Q_001"), received_at="2026-06-10T10:00:00Z")
+        r2 = self.store.persist_line_event(self._make_image_event("IMG_Q_002"), received_at="2026-06-10T10:00:05Z")
+        r3 = self.store.persist_line_event(self._make_image_event("IMG_Q_003"), received_at="2026-06-10T10:00:10Z")
+
+        self.assertFalse(r1.deduplicated)
+        self.assertFalse(r2.deduplicated)
+        self.assertFalse(r3.deduplicated)
+
+        sp = self._read_session_pointer()
+        self.assertEqual(sp["active_review_source_message_id"], "src_IMG_Q_001")
+        self.assertEqual(sp["pending_review_queue"], ["src_IMG_Q_002", "src_IMG_Q_003"])
+        self.assertEqual(sp["total_received_count"], 3)
+        self.assertEqual(sp["completed_review_count"], 0)
+        self.assertEqual(sp["latest_source_message_id"], "src_IMG_Q_003")
+
+    def test_approval_advances_review_queue(self) -> None:
+        """After approving image 1, image 2 should become active_review and get approval prompt."""
+        self.store.persist_line_event(self._make_image_event("IMG_ADV_001"), received_at="2026-06-10T10:00:00Z")
+        self.store.persist_line_event(self._make_image_event("IMG_ADV_002"), received_at="2026-06-10T10:00:05Z")
+        self.store.persist_line_event(self._make_image_event("IMG_ADV_003"), received_at="2026-06-10T10:00:10Z")
+
+        # Simulate OCR completing for all 3
+        self._setup_awaiting_approval("src_IMG_ADV_001")
+        self._setup_awaiting_approval("src_IMG_ADV_002")
+        self._setup_awaiting_approval("src_IMG_ADV_003")
+
+        # Also update the S3 session pointer for _resolve_active_approval
+        sp = self._read_session_pointer()
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key="dev/sessions/line_group_CGRP_MULTI/latest.json",
+            Body=json.dumps(sp).encode("utf-8"),
+        )
+
+        # User approves image 1
+        approve_result = self.store.persist_line_event(
+            self._make_approval_event("APPROVE_001", "ยืนยัน"),
+            received_at="2026-06-10T10:05:00Z",
+        )
+
+        self.assertEqual(approve_result.state, "approved")
+
+        sp_after = self._read_session_pointer()
+        self.assertEqual(sp_after["active_review_source_message_id"], "src_IMG_ADV_002")
+        self.assertEqual(sp_after["pending_review_queue"], ["src_IMG_ADV_003"])
+        self.assertEqual(sp_after["completed_review_count"], 1)
+
+        # Check that approval prompt for image 2 was sent via push
+        prompt_messages = [m for m in self.push_sender.messages if m.get("messages")]
+        self.assertTrue(len(prompt_messages) > 0, "Should have sent approval prompt for image 2")
+
+    def test_rejection_advances_review_queue(self) -> None:
+        """After rejecting image 1, image 2 should become active_review."""
+        self.store.persist_line_event(self._make_image_event("IMG_REJ_001"), received_at="2026-06-10T10:00:00Z")
+        self.store.persist_line_event(self._make_image_event("IMG_REJ_002"), received_at="2026-06-10T10:00:05Z")
+
+        self._setup_awaiting_approval("src_IMG_REJ_001")
+        self._setup_awaiting_approval("src_IMG_REJ_002")
+
+        sp = self._read_session_pointer()
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key="dev/sessions/line_group_CGRP_MULTI/latest.json",
+            Body=json.dumps(sp).encode("utf-8"),
+        )
+
+        reject_result = self.store.persist_line_event(
+            self._make_approval_event("REJECT_001", "ไม่ถูกต้อง"),
+            received_at="2026-06-10T10:05:00Z",
+        )
+
+        self.assertEqual(reject_result.state, "rejected")
+
+        sp_after = self._read_session_pointer()
+        self.assertEqual(sp_after["active_review_source_message_id"], "src_IMG_REJ_002")
+        self.assertEqual(sp_after["pending_review_queue"], [])
+        self.assertEqual(sp_after["completed_review_count"], 1)
+
+    def test_image_during_review_appends_to_queue(self) -> None:
+        """Sending a new image while review is active should append it to the queue."""
+        self.store.persist_line_event(self._make_image_event("IMG_MID_001"), received_at="2026-06-10T10:00:00Z")
+
+        sp1 = self._read_session_pointer()
+        self.assertEqual(sp1["active_review_source_message_id"], "src_IMG_MID_001")
+        self.assertEqual(sp1["pending_review_queue"], [])
+
+        # Simulate that image 1 OCR completed and is being reviewed
+        self._setup_awaiting_approval("src_IMG_MID_001")
+
+        # User sends image 2 during review
+        self.store.persist_line_event(self._make_image_event("IMG_MID_002"), received_at="2026-06-10T10:01:00Z")
+
+        sp2 = self._read_session_pointer()
+        self.assertEqual(sp2["active_review_source_message_id"], "src_IMG_MID_001")
+        self.assertEqual(sp2["pending_review_queue"], ["src_IMG_MID_002"])
+        self.assertEqual(sp2["total_received_count"], 2)
+
+        # User sends image 3 during review
+        self.store.persist_line_event(self._make_image_event("IMG_MID_003"), received_at="2026-06-10T10:02:00Z")
+
+        sp3 = self._read_session_pointer()
+        self.assertEqual(sp3["active_review_source_message_id"], "src_IMG_MID_001")
+        self.assertEqual(sp3["pending_review_queue"], ["src_IMG_MID_002", "src_IMG_MID_003"])
+        self.assertEqual(sp3["total_received_count"], 3)
+
+    def test_queue_empty_after_all_approved(self) -> None:
+        """After approving all images, the queue should be empty."""
+        self.store.persist_line_event(self._make_image_event("IMG_ALL_001"), received_at="2026-06-10T10:00:00Z")
+        self.store.persist_line_event(self._make_image_event("IMG_ALL_002"), received_at="2026-06-10T10:00:05Z")
+
+        self._setup_awaiting_approval("src_IMG_ALL_001")
+        self._setup_awaiting_approval("src_IMG_ALL_002")
+
+        sp = self._read_session_pointer()
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key="dev/sessions/line_group_CGRP_MULTI/latest.json",
+            Body=json.dumps(sp).encode("utf-8"),
+        )
+
+        # Approve image 1
+        self.store.persist_line_event(
+            self._make_approval_event("APPROVE_ALL_001", "ยืนยัน"),
+            received_at="2026-06-10T10:05:00Z",
+        )
+
+        sp_mid = self._read_session_pointer()
+        self.assertEqual(sp_mid["active_review_source_message_id"], "src_IMG_ALL_002")
+        self.assertEqual(sp_mid["completed_review_count"], 1)
+
+        # Update S3 session pointer for second approval
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key="dev/sessions/line_group_CGRP_MULTI/latest.json",
+            Body=json.dumps(sp_mid).encode("utf-8"),
+        )
+
+        # Approve image 2
+        self.store.persist_line_event(
+            self._make_approval_event("APPROVE_ALL_002", "ยืนยัน"),
+            received_at="2026-06-10T10:10:00Z",
+        )
+
+        sp_final = self._read_session_pointer()
+        self.assertIsNone(sp_final["active_review_source_message_id"])
+        self.assertEqual(sp_final["pending_review_queue"], [])
+        self.assertEqual(sp_final["completed_review_count"], 2)
+        self.assertEqual(sp_final["total_received_count"], 2)
 
 
 if __name__ == "__main__":
