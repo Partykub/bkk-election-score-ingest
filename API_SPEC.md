@@ -22,15 +22,15 @@
     "generatedAt": "string (ISO 8601)"
   },
   "summary": {
-    "countedUnits": "number",     // หน่วยที่นับคะแนนแล้ว
-    "totalUnits": "number",       // หน่วยเลือกตั้งทั้งหมด
-    "countedPercentage": "number",// เปอร์เซ็นต์ความคืบหน้าการนับคะแนน
-    "eligibleVoters": "number",   // จำนวนผู้มีสิทธิเลือกตั้งทั้งหมด
-    "voterTurnout": "number",     // จำนวนผู้มาใช้สิทธิ
+    "countedUnits": "number",     // หน่วยที่นับคะแนนแล้ว จำนวนของหน่วยที่มีคะแนน
+    "totalUnits": "number",       // หน่วยเลือกตั้งทั้งหมด จำนวนเขตทั้งหมดที่มีใน districts.json
+    "countedPercentage": "number",// เปอร์เซ็นต์ความคืบหน้าการนับคะแนน  คำนวณจาก eligibleVoters และ คะแนนในปัจจุบัน
+    "eligibleVoters": "number",   // จำนวนผู้มีสิทธิเลือกตั้งทั้งหมด  น่าจะมีการดึงจากไลน์แต่แยกตามเขตต้องเอามาบวกเอง
+    "voterTurnout": "number",     // จำนวนผู้มาใช้สิทธิ  น่าจะมีการดึงจากไลน์แต่แยกตามเขตต้องเอามาบวกเอง
     "voterTurnoutPercentage": "number",
-    "validBallots": "number",     // บัตรดี
-    "invalidBallots": "number",   // บัตรเสีย
-    "abstainedBallots": "number", // ไม่ออกเสียง (Vote No)
+    "validBallots": "number",     // บัตรดี น่าจะมีการดึงจากไลน์แต่แยกตามเขตต้องเอามาบวกเอง
+    "invalidBallots": "number",   // บัตรเสีย น่าจะมีการดึงจากไลน์แต่แยกตามเขตต้องเอามาบวกเอง
+    "abstainedBallots": "number", // ไม่ออกเสียง (Vote No) น่าจะมีการดึงจากไลน์แต่แยกตามเขตต้องเอามาบวกเอง
     "lastUpdatedAt": "string (ISO 8601)"
   },
   "candidates": [
@@ -38,7 +38,7 @@
       "candidateId": "string",
       "candidateNumber": "number",
       "name": "string",
-      "color": "string (Hex code)",
+      "color": "string (Hex code)", // สีผู้สมัครสามารถดึงได้จาก api-data/candidates/featured.json
       "voteCount": "number",
       "votePercentage": "number",
       "rank": "number",           // อันดับปัจจุบัน
