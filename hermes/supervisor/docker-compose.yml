@@ -8,7 +8,7 @@ services:
     ports:
       - "${HERMES_SUPERVISOR_API_PORT:-8642}:8642"
       - "${HERMES_SUPERVISOR_DASHBOARD_PORT:-9119}:9119"
-      - "${HERMES_SUPERVISOR_LINE_PORT:-8646}:${LINE_PORT:-8646}"
+      - "${HERMES_SUPERVISOR_LINE_PORT:-8647}:${LINE_PORT:-8646}"
     volumes:
       - ${HERMES_SUPERVISOR_RUNTIME_DIR:-./runtime}:/opt/data
     environment:
@@ -20,6 +20,7 @@ services:
       API_SERVER_HOST: ${API_SERVER_HOST:-0.0.0.0}
       API_SERVER_KEY: ${API_SERVER_KEY:-change-this-api-key}
       API_SERVER_CORS_ORIGINS: ${API_SERVER_CORS_ORIGINS:-*}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
       LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-replace-with-line-channel-access-token}
       LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-replace-with-line-channel-secret}
       LINE_HOST: ${LINE_HOST:-0.0.0.0}
@@ -58,6 +59,33 @@ services:
       OCR_WORKER_S3_PREFIX: ${OCR_WORKER_S3_PREFIX:-}
       OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT: ${OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT:-300}
       OCR_WORKER_MODEL_NAME: ${OCR_WORKER_MODEL_NAME:-gemma4:26b}
+
+  line-relay:
+    build:
+      context: ../..
+      dockerfile: hermes/supervisor/Dockerfile.relay
+    image: supervisor-line-relay:latest
+    container_name: ${LINE_RELAY_CONTAINER_NAME:-line-relay}
+    restart: unless-stopped
+    command: python -m hermes.supervisor.line_webhook_relay --host 0.0.0.0 --port 8646 --upstream-base-url http://hermes-supervisor:${LINE_PORT:-8646}
+    depends_on:
+      hermes-supervisor:
+        condition: service_started
+    ports:
+      - "${LINE_PORT:-8646}:8646"
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-personal_hermes}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-replace-with-line-channel-access-token}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-replace-with-line-channel-secret}
+      LINE_LIFF_CORRECTION_ID: ${LINE_LIFF_CORRECTION_ID:-}
+      SUPERVISOR_STORAGE_BACKEND: ${SUPERVISOR_STORAGE_BACKEND:-s3}
+      SUPERVISOR_S3_BUCKET: ${SUPERVISOR_S3_BUCKET:-}
+      SUPERVISOR_S3_REGION: ${SUPERVISOR_S3_REGION:-}
+      SUPERVISOR_S3_PREFIX: ${SUPERVISOR_S3_PREFIX:-}
+      SUPERVISOR_OCR_QUEUE_URL: ${SUPERVISOR_OCR_QUEUE_URL:-}
 
   update-worker:
     profiles:

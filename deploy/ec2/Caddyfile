@@ -1,0 +1,25 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	@line path /line/webhook /webhook /line/liff/*
+	handle @line {
+		reverse_proxy line-relay:8646
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy results-api:8080
+	}
+
+	handle /health {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}

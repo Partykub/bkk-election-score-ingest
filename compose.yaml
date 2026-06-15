@@ -1,0 +1,178 @@
+name: election
+
+x-aws-environment: &aws-environment
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
+services:
+  hermes-supervisor:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    command: gateway run
+    restart: unless-stopped
+    shm_size: ${HERMES_SHM_SIZE:-1gb}
+    ports:
+      - "127.0.0.1:${HERMES_API_PORT:-8642}:8642"
+      - "127.0.0.1:${HERMES_DASHBOARD_PORT:-9119}:9119"
+    volumes:
+      - ${HERMES_RUNTIME_DIR:-./hermes/supervisor/runtime-full}:/opt/data
+    environment:
+      HERMES_DASHBOARD: ${HERMES_DASHBOARD:-1}
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:?Set HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_BASIC_AUTH_SECRET:?Set HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+      API_SERVER_ENABLED: ${API_SERVER_ENABLED:-true}
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_KEY: ${API_SERVER_KEY:?Set API_SERVER_KEY}
+      API_SERVER_CORS_ORIGINS: ${API_SERVER_CORS_ORIGINS:-*}
+      HERMES_MODEL: ${HERMES_MODEL:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?Set LINE_CHANNEL_ACCESS_TOKEN}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:?Set LINE_CHANNEL_SECRET}
+      LINE_HOST: 0.0.0.0
+      LINE_PORT: 8647
+      LINE_PUBLIC_URL: ${LINE_PUBLIC_URL:-http://localhost:8646}
+      LINE_ALLOW_ALL_USERS: ${LINE_ALLOW_ALL_USERS:-false}
+      LINE_ALLOWED_USERS: ${LINE_ALLOWED_USERS:-}
+      LINE_ALLOWED_GROUPS: ${LINE_ALLOWED_GROUPS:-}
+      LINE_ALLOWED_ROOMS: ${LINE_ALLOWED_ROOMS:-}
+      LINE_HOME_CHANNEL: ${LINE_HOME_CHANNEL:-}
+
+  line-relay:
+    build:
+      context: .
+      dockerfile: hermes/supervisor/Dockerfile.relay
+    image: ${IMAGE_REGISTRY:-election}/line-relay:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - hermes.supervisor.line_webhook_relay
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8646"
+      - --upstream-base-url
+      - http://hermes-supervisor:8647
+    depends_on:
+      hermes-supervisor:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${LINE_RELAY_PORT:-8646}:8646"
+    environment:
+      <<: *aws-environment
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?Set LINE_CHANNEL_ACCESS_TOKEN}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:?Set LINE_CHANNEL_SECRET}
+      LINE_LIFF_CORRECTION_ID: ${LINE_LIFF_CORRECTION_ID:-}
+      SUPERVISOR_STORAGE_BACKEND: s3
+      SUPERVISOR_S3_BUCKET: ${ELECTION_S3_BUCKET:?Set ELECTION_S3_BUCKET}
+      SUPERVISOR_S3_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      SUPERVISOR_S3_PREFIX: ${ELECTION_S3_PREFIX:-}
+      SUPERVISOR_OCR_QUEUE_URL: ${OCR_QUEUE_URL:?Set OCR_QUEUE_URL}
+      SUPERVISOR_OCR_QUEUE_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8646/line/webhook/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  ocr-worker:
+    build:
+      context: .
+      dockerfile: hermes/ocr_worker/Dockerfile
+    image: ${IMAGE_REGISTRY:-election}/ocr-worker:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      hermes-supervisor:
+        condition: service_started
+    environment:
+      <<: *aws-environment
+      OCR_WORKER_QUEUE_URL: ${OCR_QUEUE_URL:?Set OCR_QUEUE_URL}
+      OCR_WORKER_AWS_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      OCR_WORKER_S3_BUCKET: ${ELECTION_S3_BUCKET:?Set ELECTION_S3_BUCKET}
+      OCR_WORKER_S3_PREFIX: ${ELECTION_S3_PREFIX:-}
+      OCR_WORKER_HERMES_BASE_URL: http://hermes-supervisor:8642
+      OCR_WORKER_HERMES_API_KEY: ${API_SERVER_KEY:?Set API_SERVER_KEY}
+      OCR_WORKER_HERMES_MODEL: ${OCR_WORKER_HERMES_MODEL:-gemma4:26b}
+      OCR_WORKER_MODEL_NAME: ${OCR_WORKER_MODEL_NAME:-gemma4:26b}
+      OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT: ${OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT:-300}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?Set LINE_CHANNEL_ACCESS_TOKEN}
+      LINE_LIFF_CORRECTION_ID: ${LINE_LIFF_CORRECTION_ID:-}
+
+  results-api:
+    build:
+      context: .
+      dockerfile: hermes/results_api/Dockerfile
+    image: ${IMAGE_REGISTRY:-election}/results-api:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${RESULTS_API_PORT:-8080}:8080"
+    environment:
+      <<: *aws-environment
+      RESULTS_API_S3_BUCKET: ${ELECTION_S3_BUCKET:?Set ELECTION_S3_BUCKET}
+      RESULTS_API_S3_PREFIX: ${ELECTION_S3_PREFIX:-}
+      RESULTS_API_AWS_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      RESULTS_API_SOURCE_ELECTION_ID: ${RESULTS_API_SOURCE_ELECTION_ID:-default}
+      RESULTS_API_CORS_ORIGINS: ${RESULTS_API_CORS_ORIGINS:-*}
+      RESULTS_API_KEY: ${RESULTS_API_KEY:-}
+      RESULTS_API_CANDIDATES_MANIFEST_URL: ${RESULTS_API_CANDIDATES_MANIFEST_URL:-https://w3-dev.ch7.com/api-data/candidates/manifest.json}
+      RESULTS_API_CANDIDATES_FEATURED_URL: ${RESULTS_API_CANDIDATES_FEATURED_URL:-https://w3-dev.ch7.com/api-data/candidates/featured.json}
+      RESULTS_API_CANDIDATES_TIMEOUT_SECONDS: ${RESULTS_API_CANDIDATES_TIMEOUT_SECONDS:-5}
+      RESULTS_API_CANDIDATES_CACHE_SECONDS: ${RESULTS_API_CANDIDATES_CACHE_SECONDS:-300}
+      RESULTS_API_DISTRICTS_URL: ${RESULTS_API_DISTRICTS_URL:-https://w3-dev.ch7.com/api-data/master-data/districts.json}
+      RESULTS_API_DISTRICTS_TIMEOUT_SECONDS: ${RESULTS_API_DISTRICTS_TIMEOUT_SECONDS:-5}
+      RESULTS_API_DISTRICTS_CACHE_SECONDS: ${RESULTS_API_DISTRICTS_CACHE_SECONDS:-300}
+      RESULTS_API_ELECTION_ID: ${RESULTS_API_ELECTION_ID:-bkk-governor-2026}
+      RESULTS_API_ELECTION_TITLE: ${RESULTS_API_ELECTION_TITLE:-ผลการเลือกตั้งผู้ว่าฯ กรุงเทพมหานคร}
+      RESULTS_API_RESULT_STATUS: ${RESULTS_API_RESULT_STATUS:-LIVE_COUNT}
+      RESULTS_API_DELAYED_AFTER_MINUTES: ${RESULTS_API_DELAYED_AFTER_MINUTES:-30}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    profiles: [production]
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    depends_on:
+      line-relay:
+        condition: service_healthy
+      results-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    volumes:
+      - ./deploy/ec2/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  update-worker:
+    profiles: [update-worker]
+    build:
+      context: .
+      dockerfile: hermes/update_worker/Dockerfile
+    image: ${IMAGE_REGISTRY:-election}/update-worker:${IMAGE_TAG:-local}
+    restart: "no"
+    environment:
+      <<: *aws-environment
+      UPDATE_WORKER_QUEUE_URL: ${UPDATE_QUEUE_URL:-}
+      UPDATE_WORKER_AWS_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      UPDATE_WORKER_S3_BUCKET: ${ELECTION_S3_BUCKET:?Set ELECTION_S3_BUCKET}
+      UPDATE_WORKER_S3_PREFIX: ${ELECTION_S3_PREFIX:-}
+      UPDATE_WORKER_TARGET_API_BASE_URL: ${UPDATE_WORKER_TARGET_API_BASE_URL:-}
+      UPDATE_WORKER_QUEUE_VISIBILITY_TIMEOUT: ${UPDATE_WORKER_QUEUE_VISIBILITY_TIMEOUT:-300}
+
+volumes:
+  caddy-data:
+  caddy-config:

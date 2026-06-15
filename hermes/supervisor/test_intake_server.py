@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from hermes.supervisor.intake_server import LocalStateStore, S3JsonStateBackend
+from hermes.supervisor.intake_server import LocalStateStore, S3JsonStateBackend, parse_area_id_override
 
 
 class _FakeMissingKeyError(Exception):
@@ -1664,6 +1664,64 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(sp_final["completed_review_count"], 2)
         self.assertEqual(sp_final["total_received_count"], 2)
 
+    def test_parse_area_id_override(self) -> None:
+        self.assertEqual(parse_area_id_override("แก้ไข เขต 15"), "15")
+        self.assertEqual(parse_area_id_override("เขต 44"), "44")
+        self.assertEqual(parse_area_id_override("เขต=101"), "101")
+        self.assertEqual(parse_area_id_override("แก้ไขเขต: 12"), "12")
+        self.assertIsNone(parse_area_id_override("แก้ไข เบอร์ 4=14"))
+
+    def test_correction_command_updates_area_id_and_submissions(self) -> None:
+        self.store.persist_line_event(self._make_image_event("IMG_CORR_AREA"), received_at="2026-06-10T10:00:00Z")
+        self._setup_awaiting_approval("src_IMG_CORR_AREA")
+
+        source_manifest_path = "dev/messages/src_IMG_CORR_AREA/manifest.json"
+        src_manifest = json.loads(self.s3_client.objects[("election-system", source_manifest_path)].decode("utf-8"))
+        src_manifest["area_id"] = "12"
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key=source_manifest_path,
+            Body=json.dumps(src_manifest).encode("utf-8")
+        )
+
+        draft_path = src_manifest["current_draft_key"]
+        draft_manifest = json.loads(self.s3_client.objects[("election-system", draft_path)].decode("utf-8"))
+        draft_manifest["area_id"] = "12"
+        draft_manifest["election_id"] = "election-2026"
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key=draft_path,
+            Body=json.dumps(draft_manifest).encode("utf-8")
+        )
+
+        area12_subs_path = "dev/indexes/by-area/election_2026/12/submissions.json"
+        self.store._update_area_submissions(
+            election_id="election-2026",
+            area_id="12",
+            source_message_id="src_IMG_CORR_AREA",
+            timestamp="2026-06-10T10:00:00Z",
+        )
+
+        data12 = json.loads(self.s3_client.objects[("election-system", area12_subs_path)].decode("utf-8"))
+        self.assertEqual(data12["submission_count"], 1)
+
+        self.store.persist_line_event(
+            self._make_approval_event("CORRECT_AREA", "แก้ไข เขต 13"),
+            received_at="2026-06-10T10:15:00Z",
+        )
+
+        updated_src_manifest = json.loads(self.s3_client.objects[("election-system", source_manifest_path)].decode("utf-8"))
+        self.assertEqual(updated_src_manifest["area_id"], "13")
+
+        data12 = json.loads(self.s3_client.objects[("election-system", area12_subs_path)].decode("utf-8"))
+        self.assertEqual(data12["submission_count"], 0)
+
+        area13_subs_path = "dev/indexes/by-area/election_2026/13/submissions.json"
+        data13 = json.loads(self.s3_client.objects[("election-system", area13_subs_path)].decode("utf-8"))
+        self.assertEqual(data13["submission_count"], 1)
+        self.assertEqual(data13["submissions"][0]["source_message_id"], "src_IMG_CORR_AREA")
+
 
 if __name__ == "__main__":
     unittest.main()
+

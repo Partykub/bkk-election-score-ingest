@@ -1,3 +1,4 @@
+/.env
 hermes/supervisor/.env
 hermes/supervisor/runtime/
 hermes/supervisor/runtime-full/

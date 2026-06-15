@@ -467,6 +467,16 @@ def parse_candidate_score_overrides(source_text: str | None) -> list[CandidateSc
     return overrides
 
 
+def parse_area_id_override(source_text: str | None) -> str | None:
+    if not source_text:
+        return None
+
+    match = re.search(r"เขต\s*(?:=|เป็น|คือ|ควรเป็น|:|เบอร์)?\s*(\d+)", source_text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+
 def looks_like_raw_correction_override(text: str | None) -> bool:
     normalized = str(text or "").strip()
     if not normalized:
@@ -928,6 +938,54 @@ class LocalStateStore:
 
     def _read_json(self, relative_path: str) -> dict[str, Any] | None:
         return self.state_backend.read_json(relative_path)
+
+    def _update_area_submissions(
+        self,
+        *,
+        election_id: str,
+        area_id: str,
+        source_message_id: str,
+        timestamp: str,
+        old_area_id: str | None = None,
+    ) -> None:
+        election_id_safe = safe_id(election_id) if election_id else "default"
+
+        if old_area_id and old_area_id != area_id:
+            old_path = f"indexes/by-area/{election_id_safe}/{safe_id(old_area_id)}/submissions.json"
+            old_data = self._read_json(old_path)
+            if old_data:
+                subs = old_data.get("submissions") or []
+                new_subs = [s for s in subs if s.get("source_message_id") != source_message_id]
+                old_data["submissions"] = new_subs
+                old_data["submission_count"] = len(new_subs)
+                old_data["updated_at"] = timestamp
+                self._write_json(old_path, old_data)
+
+        if area_id:
+            new_path = f"indexes/by-area/{election_id_safe}/{safe_id(area_id)}/submissions.json"
+            data = self._read_json(new_path)
+            if not data:
+                data = {
+                    "schema_version": "2026-06-09",
+                    "entity_type": "area_submissions",
+                    "election_id": election_id_safe,
+                    "area_id": area_id,
+                    "submission_count": 0,
+                    "submissions": [],
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            subs = data.get("submissions") or []
+            exists = any(s.get("source_message_id") == source_message_id for s in subs)
+            if not exists:
+                subs.append({
+                    "source_message_id": source_message_id,
+                    "submitted_at": timestamp,
+                })
+                data["submissions"] = subs
+                data["submission_count"] = len(subs)
+                data["updated_at"] = timestamp
+                self._write_json(new_path, data)
 
     def _normalize_state_path(self, path: str) -> str:
         normalized = path.replace("\\", "/").lstrip("/")
@@ -1400,6 +1458,7 @@ class LocalStateStore:
         correction_payload: dict[str, Any],
         candidate_score_overrides: list[CandidateScoreOverride],
         timestamp: str,
+        area_id_override: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str, int]:
         next_revision = infer_draft_revision(draft_manifest) + 1
         draft_id = f"draft_{source_message_id}_r{next_revision}"
@@ -1448,6 +1507,8 @@ class LocalStateStore:
         corrected_draft["ocr_job_id"] = draft_manifest.get("ocr_job_id")
         corrected_draft["revision"] = next_revision
         corrected_draft["status"] = "awaiting_approval"
+        if area_id_override:
+            corrected_draft["area_id"] = area_id_override
         corrected_draft["candidate_scores"] = candidate_scores
         corrected_draft["result_signature"] = build_result_signature(corrected_draft.get("area_id"), candidate_scores)
         corrected_draft["created_by"] = "line_correction"
@@ -1520,14 +1581,15 @@ class LocalStateStore:
 
         if action == "correct":
             candidate_score_overrides = parse_candidate_score_overrides(source_text)
-            if not candidate_score_overrides:
+            area_id_override = parse_area_id_override(source_text)
+            if not candidate_score_overrides and not area_id_override:
                 target_source_manifest["pending_user_action"] = "awaiting_correction_input"
                 target_source_manifest["updated_at"] = timestamp
                 self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
                 manifest["state"] = "exception"
                 manifest["exception"] = {
                     "code": "CORRECTION_PARSE_FAILED",
-                    "message": "correction command could not be parsed into candidate score overrides",
+                    "message": "correction command could not be parsed into candidate score overrides or area id override",
                 }
                 manifest["correction_payload"] = {
                     "normalized_action": action,
@@ -1590,6 +1652,9 @@ class LocalStateStore:
                 ],
                 "requires_manual_review": False,
             }
+            if area_id_override:
+                correction_payload["area_id_override"] = area_id_override
+
             approval_manifest["response_payload"] = correction_payload
             self._write_json(normalized_approval_key or approval_key, approval_manifest)
 
@@ -1603,9 +1668,25 @@ class LocalStateStore:
                 correction_payload=correction_payload,
                 candidate_score_overrides=candidate_score_overrides,
                 timestamp=timestamp,
+                area_id_override=area_id_override,
             )
             self._write_json(corrected_draft_key, corrected_draft)
             self._write_json(draft_latest_path(target_source_message_id), draft_pointer)
+
+            # Update submissions count!
+            old_area_id = target_source_manifest.get("area_id")
+            new_area_id = corrected_draft.get("area_id")
+            election_id = corrected_draft.get("election_id") or "default"
+            self._update_area_submissions(
+                election_id=election_id,
+                area_id=new_area_id,
+                source_message_id=target_source_message_id,
+                timestamp=timestamp,
+                old_area_id=old_area_id,
+            )
+
+            # Update target_source_manifest area_id
+            target_source_manifest["area_id"] = new_area_id
 
             next_approval_manifest, next_approval_pointer, next_approval_id, next_approval_key = self._build_approval_documents(
                 source_message_id=target_source_message_id,

@@ -82,8 +82,23 @@ For the current local setup, `.env.example` and `.env` point Docker Compose at `
 If you want to ship this to AWS EC2 and run everything through Docker, use the EC2 compose file instead of pointing Hermes at `host.docker.internal`.
 
 1. Copy `.env.ec2.example` to `.env.ec2` and replace the placeholder credentials.
-2. Review `OLLAMA_MODEL` and make sure the EC2 instance has enough RAM or GPU for that model.
-3. Start the full stack:
+2. Keep `API_SERVER_ENABLED=true` and set the same random value for `API_SERVER_KEY` and `OCR_WORKER_HERMES_API_KEY`.
+3. If the model runs behind an authenticated custom HTTPS endpoint, set `MODEL_API_KEY` and configure a named custom provider in `runtime-ec2/config.yaml`:
+
+	```yaml
+	custom_providers:
+	  - name: election-model
+	    base_url: https://model.example.com/v1
+	    key_env: MODEL_API_KEY
+	    api_mode: chat_completions
+
+	model:
+	  default: your-model-name
+	  provider: custom:election-model
+	```
+
+	Avoid a bare inline `provider: custom` for authenticated endpoints because affected Hermes versions can omit the configured authentication key.
+4. Start the full stack:
 
 	`docker compose --env-file hermes/supervisor/.env.ec2 -f hermes/supervisor/docker-compose.ec2.yml up -d`
 
@@ -91,14 +106,7 @@ If you want to ship this to AWS EC2 and run everything through Docker, use the E
 
 	`./scripts/start-hermes-supervisor-ec2.sh`
 
-4. Hermes will talk to Ollama at `http://ollama:11434/v1` over the internal Docker network.
-5. The one-shot `ollama-init` container will pull the configured model into the mounted Ollama volume.
-
-Notes:
-
-- This is the right shape when both Hermes and Ollama live on the same EC2 host and you want a single Docker-based deployment workflow.
-- If the EC2 host has an NVIDIA GPU, you can add the appropriate GPU flags or Compose GPU settings to the `ollama` service.
-- Do not reuse the local `runtime-full/` config on EC2; it points to `host.docker.internal`, which is for the local-host setup.
+The startup scripts validate the API server keys and authenticated custom-provider configuration before starting Docker Compose. Do not reuse the local `runtime-full/` config on EC2; it points to `host.docker.internal`, which is for the local-host setup.
 
 ## Start the supervisor
 

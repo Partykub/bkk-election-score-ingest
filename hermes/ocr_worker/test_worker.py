@@ -24,6 +24,8 @@ from hermes.ocr_worker.__main__ import (
     process_downloaded_job,
     send_line_push_message,
     should_acknowledge_result,
+    advance_session_pointer_on_failure,
+    update_area_submissions,
     with_s3_prefix,
 )
 
@@ -317,9 +319,9 @@ class WorkerProcessingTests(unittest.TestCase):
 
         prompt = build_ocr_prompt(downloaded_job=downloaded_job, model_name=self.config.model_name, prompt_version="ocr-v1")
 
-        self.assertIn("handwritten tally sheets", prompt)
-        self.assertIn("extract them into candidate_scores even when the page is handwritten", prompt)
-        self.assertIn("Do not leave candidate_scores empty if any readable score pairs are present", prompt)
+        self.assertIn("ข้อความที่เขียนด้วยลายมือ", prompt)
+        self.assertIn("ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน", prompt)
+        self.assertIn('"candidate_scores"', prompt)
 
     def test_build_approval_prompt_text_summarizes_draft(self):
         prompt = build_approval_prompt_text(
@@ -765,6 +767,143 @@ class WorkerProcessingTests(unittest.TestCase):
         correction_action = payload["messages"][0]["quickReply"]["items"][1]["action"]
         self.assertEqual(correction_action["type"], "message")
         self.assertEqual(correction_action["text"], "แก้ไข")
+
+    def test_update_area_submissions_records_and_updates_on_s3(self):
+        s3_client = _FakeS3Client({})
+        update_area_submissions(
+            s3_client=s3_client,
+            bucket="test-bucket",
+            prefix="test-prefix",
+            election_id="election-2026",
+            area_id="12",
+            source_message_id="src_1",
+            timestamp="2026-06-09T06:30:00Z",
+        )
+
+        expected_key = "test-prefix/indexes/by-area/election_2026/12/submissions.json"
+        self.assertIn(("test-bucket", expected_key), s3_client.objects)
+
+        data = json.loads(s3_client.objects[("test-bucket", expected_key)].decode("utf-8"))
+        self.assertEqual(data["election_id"], "election_2026")
+        self.assertEqual(data["area_id"], "12")
+        self.assertEqual(data["submission_count"], 1)
+        self.assertEqual(data["submissions"][0]["source_message_id"], "src_1")
+
+        # Test adding a second submission
+        update_area_submissions(
+            s3_client=s3_client,
+            bucket="test-bucket",
+            prefix="test-prefix",
+            election_id="election-2026",
+            area_id="12",
+            source_message_id="src_2",
+            timestamp="2026-06-09T06:45:00Z",
+        )
+        data = json.loads(s3_client.objects[("test-bucket", expected_key)].decode("utf-8"))
+        self.assertEqual(data["submission_count"], 2)
+        self.assertEqual(data["submissions"][1]["source_message_id"], "src_2")
+
+        # Test changing area_id (from 12 to 13)
+        update_area_submissions(
+            s3_client=s3_client,
+            bucket="test-bucket",
+            prefix="test-prefix",
+            election_id="election-2026",
+            area_id="13",
+            source_message_id="src_2",
+            timestamp="2026-06-09T07:00:00Z",
+            old_area_id="12",
+        )
+
+        # Area 12 should have count 1 (src_1 only)
+        data12 = json.loads(s3_client.objects[("test-bucket", expected_key)].decode("utf-8"))
+        self.assertEqual(data12["submission_count"], 1)
+        self.assertEqual(data12["submissions"][0]["source_message_id"], "src_1")
+
+        # Area 13 should have count 1 (src_2)
+        expected_key13 = "test-prefix/indexes/by-area/election_2026/13/submissions.json"
+        data13 = json.loads(s3_client.objects[("test-bucket", expected_key13)].decode("utf-8"))
+        self.assertEqual(data13["submission_count"], 1)
+        self.assertEqual(data13["submissions"][0]["source_message_id"], "src_2")
+
+
+    def test_advance_session_pointer_on_failure_clears_active_review(self):
+        session_pointer = {
+            "workflow_session_id": "line_group_G001",
+            "active_review_source_message_id": "src_IMG_001",
+            "pending_review_queue": [],
+            "total_received_count": 1,
+            "completed_review_count": 0,
+            "updated_at": "2026-06-09T06:00:00Z",
+        }
+        s3_client = _FakeS3Client({
+            ("bucket-a", "dev/sessions/line_group_G001/latest.json"): json.dumps(session_pointer).encode("utf-8"),
+        })
+
+        result = advance_session_pointer_on_failure(
+            s3_client=s3_client,
+            bucket="bucket-a",
+            prefix="dev",
+            workflow_session_id="line_group_G001",
+            failed_source_message_id="src_IMG_001",
+            timestamp="2026-06-09T06:05:00Z",
+        )
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["active_review_source_message_id"])
+        self.assertEqual(result["pending_review_queue"], [])
+
+    def test_advance_session_pointer_on_failure_promotes_next_in_queue(self):
+        session_pointer = {
+            "workflow_session_id": "line_group_G002",
+            "active_review_source_message_id": "src_IMG_A",
+            "pending_review_queue": ["src_IMG_B", "src_IMG_C"],
+            "total_received_count": 3,
+            "completed_review_count": 0,
+            "updated_at": "2026-06-09T06:00:00Z",
+        }
+        s3_client = _FakeS3Client({
+            ("bucket-a", "dev/sessions/line_group_G002/latest.json"): json.dumps(session_pointer).encode("utf-8"),
+        })
+
+        result = advance_session_pointer_on_failure(
+            s3_client=s3_client,
+            bucket="bucket-a",
+            prefix="dev",
+            workflow_session_id="line_group_G002",
+            failed_source_message_id="src_IMG_A",
+            timestamp="2026-06-09T06:05:00Z",
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["active_review_source_message_id"], "src_IMG_B")
+        self.assertEqual(result["pending_review_queue"], ["src_IMG_C"])
+
+    def test_advance_session_pointer_on_failure_removes_from_pending_queue(self):
+        session_pointer = {
+            "workflow_session_id": "line_group_G003",
+            "active_review_source_message_id": "src_IMG_X",
+            "pending_review_queue": ["src_IMG_Y", "src_IMG_Z"],
+            "total_received_count": 3,
+            "completed_review_count": 0,
+            "updated_at": "2026-06-09T06:00:00Z",
+        }
+        s3_client = _FakeS3Client({
+            ("bucket-a", "dev/sessions/line_group_G003/latest.json"): json.dumps(session_pointer).encode("utf-8"),
+        })
+
+        result = advance_session_pointer_on_failure(
+            s3_client=s3_client,
+            bucket="bucket-a",
+            prefix="dev",
+            workflow_session_id="line_group_G003",
+            failed_source_message_id="src_IMG_Y",
+            timestamp="2026-06-09T06:05:00Z",
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["active_review_source_message_id"], "src_IMG_X")
+        self.assertEqual(result["pending_review_queue"], ["src_IMG_Z"])
 
 
 if __name__ == "__main__":

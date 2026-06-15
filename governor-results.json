@@ -1,0 +1,209 @@
+{
+  "schemaVersion": "1.0",
+  "resource": "governor-results",
+  "pageMeta": {
+    "electionId": "bkk-governor-2026",
+    "title": "ผลการเลือกตั้งผู้ว่าฯ กรุงเทพมหานคร",
+    "resultStatus": "LIVE_COUNT",
+    "generatedAt": "2026-06-05T11:25:02.000Z"
+  },
+  "summary": {
+    "countedUnits": 30000,
+    "totalUnits": 99954,
+    "countedPercentage": 30.01,
+    "eligibleVoters": 5000000,
+    "voterTurnout": 2008000,
+    "voterTurnoutPercentage": 40.16,
+    "validBallots": 1958000,
+    "invalidBallots": 30000,
+    "abstainedBallots": 20000,
+    "lastUpdatedAt": "2026-06-05T11:25:02.000Z"
+  },
+  "candidates": [
+    {
+      "candidateId": "chadchart",
+      "candidateNumber": 9,
+      "name": "ชัชชาติ สิทธิพันธุ์",
+      "color": "#75B811",
+      "voteCount": 600000,
+      "votePercentage": 30.64,
+      "rank": 1,
+      "isLeading": true
+    },
+    {
+      "candidateId": "olar",
+      "candidateNumber": 15,
+      "name": "โอฬาร ตั้งตราตระกูล",
+      "color": "#051a83",
+      "voteCount": 350000,
+      "votePercentage": 17.88,
+      "rank": 2,
+      "isLeading": false
+    },
+    {
+      "candidateId": "chaiwat",
+      "candidateNumber": 10,
+      "name": "ชัยวัฒน์ สถาวรวิจิตร",
+      "color": "#FF6414",
+      "voteCount": 280000,
+      "votePercentage": 14.3,
+      "rank": 3,
+      "isLeading": false
+    },
+    {
+      "candidateId": "mallika",
+      "candidateNumber": 14,
+      "name": "มัลลิกา มหาสุข",
+      "color": "#806DB8",
+      "voteCount": 200000,
+      "votePercentage": 10.21,
+      "rank": 4,
+      "isLeading": false
+    },
+    {
+      "candidateId": "anucha",
+      "candidateNumber": 5,
+      "name": "อนุชา บูรพชัยศรี",
+      "color": "#00A1E7",
+      "voteCount": 150000,
+      "votePercentage": 7.66,
+      "rank": 5,
+      "isLeading": false
+    },
+    {
+      "candidateId": "chanthep",
+      "candidateNumber": 12,
+      "name": "ชาญเทพ เสสะเวช",
+      "color": "#E7C000",
+      "voteCount": 100000,
+      "votePercentage": 5.11,
+      "rank": 6,
+      "isLeading": false
+    },
+    {
+      "candidateId": "khomsan",
+      "candidateNumber": 13,
+      "name": "คมสัน พันธุ์วิชาติกุล",
+      "color": "#3A58E0",
+      "voteCount": 70000,
+      "votePercentage": 3.58,
+      "rank": 7,
+      "isLeading": false
+    },
+    {
+      "candidateId": "prayoon",
+      "candidateNumber": 11,
+      "name": "ประยูร ครองยศ",
+      "color": "#51CE67",
+      "voteCount": 50000,
+      "votePercentage": 2.55,
+      "rank": 8,
+      "isLeading": false
+    },
+    {
+      "candidateId": "prateep",
+      "candidateNumber": 4,
+      "name": "ประทีป วัชรโชคเกษม",
+      "color": "#7148EF",
+      "voteCount": 40000,
+      "votePercentage": 2.04,
+      "rank": 9,
+      "isLeading": false
+    },
+    {
+      "candidateId": "veerapoj",
+      "candidateNumber": 8,
+      "name": "วีรพจน์ ลือประสิทธิ์สกุล",
+      "color": "#1764AE",
+      "voteCount": 30000,
+      "votePercentage": 1.53,
+      "rank": 10,
+      "isLeading": false
+    },
+    {
+      "candidateId": "lallana",
+      "candidateNumber": 17,
+      "name": "ลลนา มงคลหัสดินทร์",
+      "color": "#166500",
+      "voteCount": 25000,
+      "votePercentage": 1.28,
+      "rank": 11,
+      "isLeading": false
+    },
+    {
+      "candidateId": "pongsak",
+      "candidateNumber": 3,
+      "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+      "color": "#D57AF0",
+      "voteCount": 20000,
+      "votePercentage": 1.02,
+      "rank": 12,
+      "isLeading": false
+    },
+    {
+      "candidateId": "phisan",
+      "candidateNumber": 6,
+      "name": "พิศาล กิตติเยาวมาลย์",
+      "color": "#FF4646",
+      "voteCount": 15000,
+      "votePercentage": 0.77,
+      "rank": 13,
+      "isLeading": false
+    },
+    {
+      "candidateId": "phasapong",
+      "candidateNumber": 7,
+      "name": "ภาสพงศ์ ไชยวิริญะวาณิชย์",
+      "color": "#D60039",
+      "voteCount": 10000,
+      "votePercentage": 0.51,
+      "rank": 14,
+      "isLeading": false
+    },
+    {
+      "candidateId": "samai",
+      "candidateNumber": 2,
+      "name": "สมัย ละเลิศ",
+      "color": "#1AA7B1",
+      "voteCount": 8000,
+      "votePercentage": 0.41,
+      "rank": 15,
+      "isLeading": false
+    },
+    {
+      "candidateId": "somchai",
+      "candidateNumber": 18,
+      "name": "สมชัย เจริญวรเกียรติ",
+      "color": "#7c200a",
+      "voteCount": 5000,
+      "votePercentage": 0.26,
+      "rank": 16,
+      "isLeading": false
+    },
+    {
+      "candidateId": "srirat",
+      "candidateNumber": 16,
+      "name": "ศรีรัฏฐ์ ช่างเพ็ชร",
+      "color": "#b5089c",
+      "voteCount": 3000,
+      "votePercentage": 0.15,
+      "rank": 17,
+      "isLeading": false
+    },
+    {
+      "candidateId": "korakasivat",
+      "candidateNumber": 1,
+      "name": "กรกสิวัฒน์ เกษมศรี",
+      "color": "#F76198",
+      "voteCount": 2000,
+      "votePercentage": 0.1,
+      "rank": 18,
+      "isLeading": false
+    }
+  ],
+  "dataQuality": {
+    "isComplete": false,
+    "isDelayed": false,
+    "warnings": []
+  }
+}

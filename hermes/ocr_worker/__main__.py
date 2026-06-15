@@ -155,6 +155,64 @@ def with_s3_prefix(key: str, *, prefix: str | None) -> str:
     return f"{normalized_prefix}/{normalized_key}"
 
 
+def update_area_submissions(
+    s3_client: Any,
+    bucket: str,
+    prefix: str | None,
+    election_id: str,
+    area_id: str,
+    source_message_id: str,
+    timestamp: str,
+    old_area_id: str | None = None,
+) -> None:
+    election_id_safe = safe_id(election_id) if election_id else "default"
+
+    if old_area_id and old_area_id != area_id:
+        old_key = with_s3_prefix(
+            f"indexes/by-area/{election_id_safe}/{safe_id(old_area_id)}/submissions.json",
+            prefix=prefix,
+        )
+        old_data = read_json_object_if_exists(s3_client, bucket=bucket, key=old_key)
+        if old_data:
+            subs = old_data.get("submissions") or []
+            new_subs = [s for s in subs if s.get("source_message_id") != source_message_id]
+            old_data["submissions"] = new_subs
+            old_data["submission_count"] = len(new_subs)
+            old_data["updated_at"] = timestamp
+            write_json_object(s3_client, bucket=bucket, key=old_key, payload=old_data)
+
+    if area_id:
+        new_key = with_s3_prefix(
+            f"indexes/by-area/{election_id_safe}/{safe_id(area_id)}/submissions.json",
+            prefix=prefix,
+        )
+        data = read_json_object_if_exists(s3_client, bucket=bucket, key=new_key)
+        if not data:
+            data = {
+                "schema_version": "2026-06-09",
+                "entity_type": "area_submissions",
+                "election_id": election_id_safe,
+                "area_id": area_id,
+                "submission_count": 0,
+                "submissions": [],
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
+
+        subs = data.get("submissions") or []
+        exists = any(s.get("source_message_id") == source_message_id for s in subs)
+        if not exists:
+            subs.append({
+                "source_message_id": source_message_id,
+                "submitted_at": timestamp,
+            })
+            data["submissions"] = subs
+            data["submission_count"] = len(subs)
+            data["updated_at"] = timestamp
+            write_json_object(s3_client, bucket=bucket, key=new_key, payload=data)
+
+
+
 def parse_queue_envelope(message_body: str, *, default_bucket: str | None) -> QueueEnvelope:
     raw_body = message_body.strip()
     try:
@@ -635,6 +693,55 @@ def maybe_send_approval_prompt(
     return source_manifest["approval_prompt"]
 
 
+def advance_session_pointer_on_failure(
+    *,
+    s3_client: Any,
+    bucket: str,
+    prefix: str,
+    workflow_session_id: str,
+    failed_source_message_id: str,
+    timestamp: str,
+) -> dict[str, Any] | None:
+    """Clear active_review_source_message_id when OCR fails, so next image doesn't queue behind a dead item."""
+    if not workflow_session_id:
+        return None
+
+    session_pointer_key = with_s3_prefix(
+        f"sessions/{safe_id(workflow_session_id)}/latest.json",
+        prefix=prefix,
+    )
+    session_pointer = read_json_object_if_exists(s3_client, bucket=bucket, key=session_pointer_key)
+    if session_pointer is None:
+        return None
+
+    active_review_id = str(session_pointer.get("active_review_source_message_id") or "").strip()
+    if active_review_id != failed_source_message_id:
+        # The failed item is not the active review, check if it's in the pending queue
+        pending_queue = list(session_pointer.get("pending_review_queue") or [])
+        if failed_source_message_id in pending_queue:
+            pending_queue.remove(failed_source_message_id)
+            session_pointer["pending_review_queue"] = pending_queue
+            session_pointer["updated_at"] = timestamp
+            write_json_object(s3_client, bucket=bucket, key=session_pointer_key, payload=session_pointer)
+        return session_pointer
+
+    # The failed item IS the active review — advance the queue
+    pending_queue = list(session_pointer.get("pending_review_queue") or [])
+    completed_count = int(session_pointer.get("completed_review_count") or 0)
+
+    if pending_queue:
+        next_id = pending_queue.pop(0)
+        session_pointer["active_review_source_message_id"] = next_id
+    else:
+        session_pointer["active_review_source_message_id"] = None
+
+    session_pointer["pending_review_queue"] = pending_queue
+    session_pointer["completed_review_count"] = completed_count
+    session_pointer["updated_at"] = timestamp
+    write_json_object(s3_client, bucket=bucket, key=session_pointer_key, payload=session_pointer)
+    return session_pointer
+
+
 def maybe_send_ocr_failure_notice(
     *,
     s3_client: Any,
@@ -688,11 +795,33 @@ def maybe_send_ocr_failure_notice(
 
 def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_version: str) -> str:
     return (
-        "You are OCR worker for Thai election score sheets, handwritten tally sheets, and informal score lists. "
-        "Analyze the attached image and return JSON only. If the image shows visible candidate-number/score pairs, extract them into candidate_scores "
-        "even when the page is handwritten, informal, or missing election metadata. Treat notebook score lists and hand-written tally pages as valid election-result inputs when they clearly record candidate numbers with scores. "
-        "Use document_type='other' only when the image is unrelated to election results or when no candidate-number/score pairs are visible at all. Do not leave candidate_scores empty if any readable score pairs are present.\n\n"
-        "Return exactly this JSON shape:\n"
+        "คุณคือผู้ช่วยดึงข้อมูลจากรูปภาพใบนับคะแนนเลือกตั้ง (ภาษาไทย) "
+        "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่เขียนด้วยลายมือบนหัวกระดาษ เช่น 'เขต 3' หรือบางครั้งอาจจะอ่านคล้ายๆ 'เลข 3', '69' ขอให้ตีความว่าเป็นหมายเลขเขต (area_id) "
+        "ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน และนำข้อมูลทั้งหมดมาจัดเรียงในรูปแบบ JSON ตามโครงสร้างด้านล่างนี้เท่านั้น ห้ามพิมพ์ข้อความอธิบายใดๆ เพิ่มเติม\n\n"
+        "ข้อควรระวัง: สังเกตข้อความมุมซ้ายบนหรือขวาบนของกระดาษให้ดี หากพบตัวเลขเดี่ยวๆ หรือคำว่า 'เขต' หรือ 'เลข' ตามด้วยตัวเลข ให้ใส่ตัวเลขนั้นในช่อง 'area_id' ทันที (เช่น เขต 3 -> area_id: \"3\")\n\n"
+        "ตัวอย่างถ้าในรูปมีข้อความ 'เขต 3' และมีคะแนนเบอร์ 1 ได้ 120 คะแนน ให้ตอบ JSON แบบนี้:\n"
+        "{\n"
+        '  "document_type": "election_score_sheet",\n'
+        '  "summary_text": "พบคะแนนและระบุเขต 3",\n'
+        '  "election_id": null,\n'
+        '  "area_id": "3",\n'
+        '  "polling_unit_id": null,\n'
+        '  "observed_at": null,\n'
+        '  "overall_confidence": 0.95,\n'
+        '  "validation_flags": [],\n'
+        '  "image_quality_flags": [],\n'
+        '  "notes": "เห็นเขต 3 ที่หัวกระดาษ",\n'
+        '  "candidate_scores": [\n'
+        "    {\n"
+        '      "candidate_number": 1,\n'
+        '      "candidate_name": null,\n'
+        '      "score": 120,\n'
+        '      "confidence": 0.95,\n'
+        '      "raw_text": "1 120"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "ตอนนี้ตาคุณแล้ว คืนค่าเฉพาะข้อมูล JSON ของรูปภาพนี้ ห้ามมี Markdown หรือคำอธิบายเพิ่มเติม:\n"
         "{\n"
         '  "document_type": "election_score_sheet" | "other",\n'
         '  "summary_text": string,\n'
@@ -717,8 +846,7 @@ def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_v
         f"Workflow session: {downloaded_job.workflow_session_id or 'unknown'}\n"
         f"Source message ID: {downloaded_job.source_message_id}\n"
         f"Requested OCR model label: {model_name}\n"
-        f"Prompt version: {prompt_version}\n"
-        "Read Thai text carefully, preserve Arabic numerals, and avoid inventing scores that are not visible in the image."
+        f"Prompt version: {prompt_version}"
     )
 
 
@@ -1147,6 +1275,7 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
 
         if source_manifest is not None:
             source_manifest["state"] = "awaiting_approval"
+            source_manifest["area_id"] = draft_manifest.get("area_id")
             source_manifest["current_draft_id"] = draft_manifest["draft_id"]
             source_manifest["current_draft_key"] = revision_key
             source_manifest["current_ocr_job_id"] = downloaded_job.ocr_job_id
@@ -1167,6 +1296,20 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
                 source_manifest["current_approval_id"] = approval_id
                 source_manifest["current_approval_key"] = approval_key
             write_json_object(s3_client, bucket=downloaded_job.manifest_bucket, key=source_manifest_path, payload=source_manifest)
+
+            election_id = draft_manifest.get("election_id") or "default"
+            area_id = draft_manifest.get("area_id")
+            if area_id:
+                update_area_submissions(
+                    s3_client=s3_client,
+                    bucket=downloaded_job.manifest_bucket,
+                    prefix=config.s3_prefix,
+                    election_id=election_id,
+                    area_id=area_id,
+                    source_message_id=downloaded_job.source_message_id,
+                    timestamp=timestamp,
+                )
+
 
         session_pointer_key = with_s3_prefix(
             f"sessions/{safe_id(downloaded_job.workflow_session_id)}/latest.json",
@@ -1249,6 +1392,14 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
             source_manifest_path=source_manifest_path,
             source_manifest=source_manifest,
             config=config,
+            timestamp=failure_timestamp,
+        )
+        advance_session_pointer_on_failure(
+            s3_client=s3_client,
+            bucket=downloaded_job.manifest_bucket,
+            prefix=config.s3_prefix,
+            workflow_session_id=downloaded_job.workflow_session_id,
+            failed_source_message_id=downloaded_job.source_message_id,
             timestamp=failure_timestamp,
         )
         return {

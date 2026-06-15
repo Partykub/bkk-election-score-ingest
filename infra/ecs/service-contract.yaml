@@ -1,0 +1,67 @@
+version: 1
+cluster: election
+
+services:
+  gateway:
+    desiredCount: 1
+    publicRoutes:
+      - /line/webhook
+      - /webhook
+      - /line/liff/*
+    targetContainer: line-relay
+    targetPort: 8646
+    containers:
+      hermes-supervisor:
+        image: nousresearch/hermes-agent
+        ports: [8642, 8647, 9119]
+        persistentPath: /opt/data
+        secrets:
+          - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+          - HERMES_DASHBOARD_BASIC_AUTH_SECRET
+          - API_SERVER_KEY
+          - MODEL_API_KEY
+          - LINE_CHANNEL_ACCESS_TOKEN
+          - LINE_CHANNEL_SECRET
+      line-relay:
+        image: line-relay
+        ports: [8646]
+        healthPath: /line/webhook/health
+        upstream: http://127.0.0.1:8647
+        secrets:
+          - LINE_CHANNEL_ACCESS_TOKEN
+          - LINE_CHANNEL_SECRET
+    permissions:
+      - s3:read-write
+      - sqs:send
+
+  ocr-worker:
+    desiredCount: 1
+    publicRoutes: []
+    containers:
+      ocr-worker:
+        image: ocr-worker
+        ports: []
+        hermesBaseUrl: http://gateway.service.local:8642
+        secrets:
+          - API_SERVER_KEY
+          - LINE_CHANNEL_ACCESS_TOKEN
+    permissions:
+      - s3:read-write
+      - sqs:receive-delete
+    autoscaling:
+      metric: ApproximateNumberOfMessagesVisible
+
+  results-api:
+    desiredCount: 1
+    publicRoutes:
+      - /api/*
+    targetContainer: results-api
+    targetPort: 8080
+    containers:
+      results-api:
+        image: results-api
+        ports: [8080]
+        healthPath: /health
+    permissions:
+      - s3:read-only
+
