@@ -247,9 +247,46 @@ def build_free_chat_system_prompt() -> str:
         "You can chat naturally in Thai.\n"
         "Keep replies concise, friendly, and practical.\n"
         "Do not pretend to have completed OCR or approval actions unless the user explicitly asked and the workflow handled it.\n"
+        "If a score draft is awaiting approval, only guide approval/correction when the user intent is clearly approve, reject, or correct.\n"
+        "For general questions or casual chat, answer normally and do not force the user back into the approval flow.\n"
         "If the user asks what you can do, mention receiving score photos, OCR draft review, approval, and corrections.\n"
         "Prefer Thai in replies unless the user writes in another language."
     )
+
+
+def build_rule_based_chat_reply(text: str | None) -> str | None:
+    normalized = normalize_command_text(text).lower()
+    if not normalized:
+        return None
+
+    identity_keywords = (
+        "\u0e0a\u0e37\u0e48\u0e2d\u0e2d\u0e30\u0e44\u0e23",
+        "\u0e04\u0e38\u0e13\u0e0a\u0e37\u0e48\u0e2d\u0e2d\u0e30\u0e44\u0e23",
+        "\u0e19\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d\u0e2d\u0e30\u0e44\u0e23",
+        "\u0e41\u0e19\u0e30\u0e19\u0e33\u0e15\u0e31\u0e27",
+    )
+    getting_started_keywords = (
+        "\u0e40\u0e23\u0e34\u0e48\u0e21\u0e08\u0e32\u0e01",
+        "\u0e40\u0e23\u0e34\u0e48\u0e21\u0e22\u0e31\u0e07\u0e44\u0e07",
+        "\u0e2a\u0e48\u0e07\u0e23\u0e39\u0e1b\u0e01\u0e48\u0e2d\u0e19",
+        "\u0e15\u0e49\u0e2d\u0e07\u0e17\u0e33\u0e22\u0e31\u0e07\u0e44\u0e07",
+    )
+
+    if any(keyword in normalized for keyword in identity_keywords):
+        return (
+            "\u0e1c\u0e21\u0e40\u0e1b\u0e47\u0e19\u0e1c\u0e39\u0e49\u0e0a\u0e48\u0e27\u0e22 LINE "
+            "\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e23\u0e31\u0e1a\u0e1c\u0e25\u0e04\u0e30\u0e41\u0e19\u0e19\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e15\u0e31\u0e49\u0e07\u0e04\u0e23\u0e31\u0e1a\n"
+            "\u0e16\u0e49\u0e32\u0e08\u0e30\u0e43\u0e2b\u0e49\u0e40\u0e23\u0e35\u0e22\u0e01\u0e2a\u0e31\u0e49\u0e19 \u0e46 "
+            "\u0e40\u0e23\u0e35\u0e22\u0e01\u0e1c\u0e21\u0e27\u0e48\u0e32 BKK Election \u0e44\u0e14\u0e49"
+        )
+    if any(keyword in normalized for keyword in getting_started_keywords):
+        return (
+            "\u0e40\u0e23\u0e34\u0e48\u0e21\u0e08\u0e32\u0e01\u0e2a\u0e48\u0e07\u0e23\u0e39\u0e1b\u0e1c\u0e25\u0e04\u0e30\u0e41\u0e19\u0e19\u0e21\u0e32\u0e44\u0e14\u0e49\u0e40\u0e25\u0e22\n"
+            "\u0e1c\u0e21\u0e08\u0e30\u0e2d\u0e48\u0e32\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02\u0e41\u0e25\u0e30\u0e2a\u0e23\u0e38\u0e1b"
+            "\u0e40\u0e1b\u0e47\u0e19\u0e23\u0e48\u0e32\u0e07\u0e43\u0e2b\u0e49\u0e15\u0e23\u0e27\u0e08 "
+            "\u0e01\u0e48\u0e2d\u0e19\u0e04\u0e48\u0e2d\u0e22\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e2b\u0e23\u0e37\u0e2d\u0e41\u0e01\u0e49\u0e44\u0e02"
+        )
+    return None
 
 
 def build_candidate_score_lines(draft_manifest: dict[str, Any]) -> list[str]:
@@ -261,6 +298,22 @@ def build_candidate_score_lines(draft_manifest: dict[str, Any]) -> list[str]:
         if candidate_number is None or candidate_value is None:
             continue
         lines.append(f"ผู้สมัคร {candidate_number}: {candidate_value}")
+    return lines
+
+
+def build_ballot_summary_lines(draft_manifest: dict[str, Any]) -> list[str]:
+    fields = [
+        ("\u0e1c\u0e39\u0e49\u0e21\u0e35\u0e2a\u0e34\u0e17\u0e18\u0e34", "eligible_voters"),
+        ("\u0e1c\u0e39\u0e49\u0e21\u0e32\u0e43\u0e0a\u0e49\u0e2a\u0e34\u0e17\u0e18\u0e34", "voter_turnout"),
+        ("\u0e1a\u0e31\u0e15\u0e23\u0e14\u0e35", "valid_ballots"),
+        ("\u0e1a\u0e31\u0e15\u0e23\u0e40\u0e2a\u0e35\u0e22", "invalid_ballots"),
+        ("Vote No", "vote_no"),
+    ]
+    lines: list[str] = []
+    for label, key in fields:
+        value = draft_manifest.get(key)
+        if value is not None:
+            lines.append(f"{label}: {value}")
     return lines
 
 
@@ -537,6 +590,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     area_id = str(draft_manifest.get("area_id") or "").strip()
     polling_unit_id = str(draft_manifest.get("polling_unit_id") or "").strip()
     candidate_scores = normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+    ballot_summary_lines = build_ballot_summary_lines(draft_manifest)
 
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
     if area_id:
@@ -545,10 +599,14 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
 
+    if ballot_summary_lines:
+        lines.append("\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e1a\u0e31\u0e15\u0e23\u0e17\u0e35\u0e48\u0e2d\u0e48\u0e32\u0e19\u0e44\u0e14\u0e49:")
+        lines.extend(ballot_summary_lines)
+
     if candidate_scores:
         lines.append("คะแนนที่อ่านได้:")
         lines.extend(build_candidate_score_lines(draft_manifest))
-    else:
+    elif not ballot_summary_lines:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
@@ -1156,6 +1214,11 @@ class LocalStateStore:
                 "area_id": draft_manifest.get("area_id"),
                 "polling_unit_id": draft_manifest.get("polling_unit_id"),
                 "report_type": draft_manifest.get("report_type"),
+                "eligible_voters": draft_manifest.get("eligible_voters"),
+                "voter_turnout": draft_manifest.get("voter_turnout"),
+                "valid_ballots": draft_manifest.get("valid_ballots"),
+                "invalid_ballots": draft_manifest.get("invalid_ballots"),
+                "abstained_ballots": draft_manifest.get("vote_no"),
                 "candidate_scores": draft_manifest.get("candidate_scores") or [],
             },
             "result": None,
@@ -1339,6 +1402,10 @@ class LocalStateStore:
         target_source_message_id, target_source_manifest, _, approval_manifest = self._resolve_active_approval(workflow_session_id)
         if source_type == "text" and (target_source_manifest is None or approval_manifest is None or not target_source_message_id):
             if not self._reply_free_chat_text(manifest):
+                rule_based_reply = build_rule_based_chat_reply(manifest.get("source_text"))
+                if rule_based_reply:
+                    self._reply_text(manifest, rule_based_reply)
+                    return
                 self._reply_text(manifest, build_smalltalk_reply_text(manifest.get("source_text")))
             return
         if target_source_manifest is None or approval_manifest is None or not target_source_message_id:
@@ -1356,6 +1423,10 @@ class LocalStateStore:
                 self._reply_text(manifest, build_post_approval_correction_text())
             elif source_type == "text":
                 if not self._reply_free_chat_text(manifest):
+                    rule_based_reply = build_rule_based_chat_reply(source_text)
+                    if rule_based_reply:
+                        self._reply_text(manifest, rule_based_reply)
+                        return
                     self._reply_text(manifest, build_smalltalk_reply_text(source_text))
             return
 
@@ -1381,7 +1452,22 @@ class LocalStateStore:
             elif looks_like_correction_text(source_text):
                 self._reply_text(manifest, build_correction_guidance_text())
             else:
-                self._reply_text(manifest, build_pending_approval_fallback_text())
+                if self.chat_completion_client is None:
+                    rule_based_reply = build_rule_based_chat_reply(source_text)
+                    if rule_based_reply:
+                        self._reply_text(manifest, rule_based_reply)
+                    else:
+                        fallback_text = build_smalltalk_reply_text(source_text)
+                        if fallback_text == build_general_help_text():
+                            self._reply_text(manifest, build_pending_approval_fallback_text())
+                        else:
+                            self._reply_text(manifest, fallback_text)
+                elif not self._reply_free_chat_text(manifest):
+                    rule_based_reply = build_rule_based_chat_reply(source_text)
+                    if rule_based_reply:
+                        self._reply_text(manifest, rule_based_reply)
+                        return
+                    self._reply_text(manifest, build_smalltalk_reply_text(source_text))
 
     def _load_target_draft_manifest(self, manifest: dict[str, Any]) -> dict[str, Any] | None:
         target_source_message_id = str(manifest.get("target_source_message_id") or "").strip()
