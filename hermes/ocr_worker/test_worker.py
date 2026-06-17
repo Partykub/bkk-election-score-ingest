@@ -137,6 +137,7 @@ class WorkerProcessingTests(unittest.TestCase):
             model_name="gemma-vision",
             poll_seconds=15,
             queue_max_messages=1,
+            processing_concurrency=1,
             queue_wait_seconds=10,
             queue_visibility_timeout=60,
         )
@@ -518,6 +519,7 @@ class WorkerProcessingTests(unittest.TestCase):
             model_name="gemma4:26b",
             poll_seconds=15,
             queue_max_messages=1,
+            processing_concurrency=1,
             queue_wait_seconds=10,
             queue_visibility_timeout=300,
         )

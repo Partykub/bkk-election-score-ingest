@@ -7,6 +7,7 @@ import os
 import re
 import signal
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +32,7 @@ class WorkerConfig:
     model_name: str
     poll_seconds: int
     queue_max_messages: int
+    processing_concurrency: int
     queue_wait_seconds: int
     queue_visibility_timeout: int
 
@@ -105,6 +107,7 @@ def build_config() -> WorkerConfig:
     )
     poll_seconds = int(os.environ.get("OCR_WORKER_POLL_SECONDS", "15"))
     queue_max_messages = int(os.environ.get("OCR_WORKER_QUEUE_MAX_MESSAGES", "1"))
+    processing_concurrency = int(os.environ.get("OCR_WORKER_PROCESSING_CONCURRENCY", "1"))
     queue_wait_seconds = int(os.environ.get("OCR_WORKER_QUEUE_WAIT_SECONDS", "10"))
     queue_visibility_timeout = int(os.environ.get("OCR_WORKER_QUEUE_VISIBILITY_TIMEOUT", "300"))
 
@@ -121,6 +124,7 @@ def build_config() -> WorkerConfig:
         model_name=os.environ.get("OCR_WORKER_MODEL_NAME", "gemma-vision").strip(),
         poll_seconds=max(1, poll_seconds),
         queue_max_messages=max(1, min(10, queue_max_messages)),
+        processing_concurrency=max(1, min(10, processing_concurrency)),
         queue_wait_seconds=max(0, min(20, queue_wait_seconds)),
         queue_visibility_timeout=max(1, queue_visibility_timeout),
     )
@@ -488,6 +492,34 @@ def build_result_signature(candidate_scores: list[dict[str, Any]], area_id: str 
     return f"{prefix}:" + "|".join(fragments)
 
 
+def normalize_optional_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return int(str(value).replace(",", "").strip())
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def build_ballot_summary_lines(draft_manifest: dict[str, Any]) -> list[str]:
+    fields = [
+        ("\u0e1c\u0e39\u0e49\u0e21\u0e35\u0e2a\u0e34\u0e17\u0e18\u0e34", "eligible_voters"),
+        ("\u0e1c\u0e39\u0e49\u0e21\u0e32\u0e43\u0e0a\u0e49\u0e2a\u0e34\u0e17\u0e18\u0e34", "voter_turnout"),
+        ("\u0e1a\u0e31\u0e15\u0e23\u0e14\u0e35", "valid_ballots"),
+        ("\u0e1a\u0e31\u0e15\u0e23\u0e40\u0e2a\u0e35\u0e22", "invalid_ballots"),
+        ("Vote No", "vote_no"),
+    ]
+    lines: list[str] = []
+    for label, key in fields:
+        value = draft_manifest.get(key)
+        if value is not None:
+            lines.append(f"{label}: {value}")
+    return lines
+
+
 def detect_candidate_score_normalization_warnings(raw_scores: Any, normalized_scores: list[dict[str, Any]]) -> list[str]:
     warnings: list[str] = []
     if not isinstance(raw_scores, list):
@@ -528,6 +560,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     area_id = str(draft_manifest.get("area_id") or "").strip()
     polling_unit_id = str(draft_manifest.get("polling_unit_id") or "").strip()
     candidate_scores = normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+    ballot_summary_lines = build_ballot_summary_lines(draft_manifest)
 
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
     if area_id:
@@ -535,6 +568,10 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     if polling_unit_id:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
+
+    if ballot_summary_lines:
+        lines.append("\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e1a\u0e31\u0e15\u0e23\u0e17\u0e35\u0e48\u0e2d\u0e48\u0e32\u0e19\u0e44\u0e14\u0e49:")
+        lines.extend(ballot_summary_lines)
 
     if candidate_scores:
         lines.append("คะแนนที่อ่านได้:")
@@ -544,7 +581,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
             if candidate_number is None or candidate_value is None:
                 continue
             lines.append(f"ผู้สมัคร {candidate_number}: {candidate_value}")
-    else:
+    elif not ballot_summary_lines:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
     lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
@@ -797,15 +834,20 @@ def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_v
     return (
         "คุณคือผู้ช่วยดึงข้อมูลจากรูปภาพใบนับคะแนนเลือกตั้ง (ภาษาไทย) "
         "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่เขียนด้วยลายมือบนหัวกระดาษ เช่น 'เขต 3' หรือบางครั้งอาจจะอ่านคล้ายๆ 'เลข 3', '69' ขอให้ตีความว่าเป็นหมายเลขเขต (area_id) "
-        "ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน และนำข้อมูลทั้งหมดมาจัดเรียงในรูปแบบ JSON ตามโครงสร้างด้านล่างนี้เท่านั้น ห้ามพิมพ์ข้อความอธิบายใดๆ เพิ่มเติม\n\n"
+        "ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน และให้หาข้อมูลสรุปจำนวนบัตรด้วย ได้แก่ ผู้มีสิทธิเลือกตั้ง (eligible_voters), ผู้มาใช้สิทธิ (voter_turnout), บัตรดี (valid_ballots), บัตรเสีย (invalid_ballots), และไม่ประสงค์ลงคะแนน/ไม่ออกคะแนน (vote_no) จากนั้นนำข้อมูลทั้งหมดมาจัดเรียงในรูปแบบ JSON ตามโครงสร้างด้านล่างนี้เท่านั้น ห้ามพิมพ์ข้อความอธิบายใดๆ เพิ่มเติม หากไม่พบข้อมูลใดให้ใส่ null\n\n"
         "ข้อควรระวัง: สังเกตข้อความมุมซ้ายบนหรือขวาบนของกระดาษให้ดี หากพบตัวเลขเดี่ยวๆ หรือคำว่า 'เขต' หรือ 'เลข' ตามด้วยตัวเลข ให้ใส่ตัวเลขนั้นในช่อง 'area_id' ทันที (เช่น เขต 3 -> area_id: \"3\")\n\n"
-        "ตัวอย่างถ้าในรูปมีข้อความ 'เขต 3' และมีคะแนนเบอร์ 1 ได้ 120 คะแนน ให้ตอบ JSON แบบนี้:\n"
+        "ตัวอย่างถ้าในรูปมีข้อความ 'เขต 3', มีผู้มีสิทธิ 100, ผู้มาใช้สิทธิ 80, บัตรดี 70, บัตรเสีย 5, ไม่ออกคะแนน 5, และมีคะแนนเบอร์ 1 ได้ 120 คะแนน ให้ตอบ JSON แบบนี้:\n"
         "{\n"
         '  "document_type": "election_score_sheet",\n'
-        '  "summary_text": "พบคะแนนและระบุเขต 3",\n'
+        '  "summary_text": "พบคะแนน, สรุปจำนวนบัตร, และระบุเขต 3",\n'
         '  "election_id": null,\n'
         '  "area_id": "3",\n'
         '  "polling_unit_id": null,\n'
+        '  "eligible_voters": 100,\n'
+        '  "voter_turnout": 80,\n'
+        '  "valid_ballots": 70,\n'
+        '  "invalid_ballots": 5,\n'
+        '  "vote_no": 5,\n'
         '  "observed_at": null,\n'
         '  "overall_confidence": 0.95,\n'
         '  "validation_flags": [],\n'
@@ -828,6 +870,11 @@ def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_v
         '  "election_id": string | null,\n'
         '  "area_id": string | null,\n'
         '  "polling_unit_id": string | null,\n'
+        '  "eligible_voters": number | null,\n'
+        '  "voter_turnout": number | null,\n'
+        '  "valid_ballots": number | null,\n'
+        '  "invalid_ballots": number | null,\n'
+        '  "vote_no": number | null,\n'
         '  "observed_at": string | null,\n'
         '  "overall_confidence": number,\n'
         '  "validation_flags": string[],\n'
@@ -933,6 +980,11 @@ def build_draft_documents(
         validation_flags = sorted(set(validation_flags + ["low_confidence", "requires_human_review"]))
 
     area_id = normalized_payload.get("area_id")
+    eligible_voters = normalize_optional_int(normalized_payload, "eligible_voters", "eligibleVoters")
+    voter_turnout = normalize_optional_int(normalized_payload, "voter_turnout", "voterTurnout")
+    valid_ballots = normalize_optional_int(normalized_payload, "valid_ballots", "validBallots")
+    invalid_ballots = normalize_optional_int(normalized_payload, "invalid_ballots", "invalidBallots")
+    vote_no = normalize_optional_int(normalized_payload, "vote_no", "abstained_ballots", "abstainedBallots", "voteNo")
     result_signature = build_result_signature(candidate_scores, str(area_id).strip() if area_id else None)
     prompt_version = str((ocr_job_manifest.get("ocr_options") or {}).get("prompt_version") or "ocr-v1")
 
@@ -948,6 +1000,11 @@ def build_draft_documents(
         "election_id": normalized_payload.get("election_id"),
         "area_id": area_id,
         "polling_unit_id": normalized_payload.get("polling_unit_id"),
+        "eligible_voters": eligible_voters,
+        "voter_turnout": voter_turnout,
+        "valid_ballots": valid_ballots,
+        "invalid_ballots": invalid_ballots,
+        "vote_no": vote_no,
         "report_type": normalized_payload.get("document_type") or "score_sheet",
         "observed_at": normalized_payload.get("observed_at"),
         "result_signature": result_signature,
@@ -1534,8 +1591,13 @@ def main() -> None:
             )
             continue
 
-        for downloaded_job in downloaded_jobs:
-            result_payload = process_downloaded_job(downloaded_job=downloaded_job, s3_client=s3_client, config=config)
+        def process_job(downloaded_job: DownloadedJob) -> dict[str, Any]:
+            return process_downloaded_job(downloaded_job=downloaded_job, s3_client=s3_client, config=config)
+
+        with ThreadPoolExecutor(max_workers=config.processing_concurrency) as executor:
+            result_payloads = executor.map(process_job, downloaded_jobs)
+
+        for downloaded_job, result_payload in zip(downloaded_jobs, result_payloads):
             print(json.dumps(result_payload, ensure_ascii=False))
             if should_acknowledge_result(result_payload):
                 acknowledge_job(queue_client=queue_client, config=config, downloaded_job=downloaded_job)
