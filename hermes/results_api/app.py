@@ -696,6 +696,7 @@ def build_monitor_districts(
     district_catalog: dict[str, dict[str, Any]],
     area_indexes: dict[str, dict[str, Any]],
     approved_results_by_area: dict[str, list[dict[str, Any]]],
+    raw_approved_results_by_area: dict[str, list[dict[str, Any]]] | None = None,
     candidate_catalog: dict[int, dict[str, Any]] | None = None,
     election_id: str = "bkk-governor-2026",
     delayed_after_minutes: int = 30,
@@ -715,12 +716,14 @@ def build_monitor_districts(
         area_id = str(district.get("id"))
         index = area_indexes.get(area_id) or {}
         approved_results = approved_results_by_area.get(area_id) or []
+        raw_approved_results = (raw_approved_results_by_area or {}).get(area_id) or approved_results
         latest_result = approved_results[0] if approved_results else None
+        latest_raw_result = raw_approved_results[0] if raw_approved_results else latest_result
         missing_fields = monitor_missing_fields(latest_result) if latest_result else []
         warnings = monitor_validation_warnings(latest_result)
         submission_count = int(index.get("submission_count") or len(index.get("submissions", []) or []))
-        approved_submission_count = len(approved_results)
-        latest_approved_at = latest_result.get("approved_at") if latest_result else None
+        approved_submission_count = len(raw_approved_results)
+        latest_approved_at = latest_raw_result.get("approved_at") if latest_raw_result else None
         latest_approved_datetime = parse_iso_datetime(latest_approved_at)
         is_delayed = (
             bool(generated_datetime and latest_approved_datetime)
@@ -1085,18 +1088,6 @@ def interpreted_results_by_area(approved_results_by_area: dict[str, list[dict[st
 
 
 def interpreted_public_results(mode: str) -> list[dict[str, Any]]:
-    if mode == "incremental_delta":
-        results = []
-        for area_id in store.list_area_indexes(settings.source_election_id):
-            _, effective_results = apply_round_overrides(
-                area_id,
-                store.approved_results_for_area(settings.source_election_id, area_id),
-            )
-            approved_results = apply_district_summary_overrides(effective_results)
-            result = interpreted_area_result(approved_results, mode)
-            if result:
-                results.append(result)
-        return results
     results = []
     for area_id in store.list_area_indexes(settings.source_election_id):
         _, effective_results = apply_round_overrides(
@@ -1104,8 +1095,9 @@ def interpreted_public_results(mode: str) -> list[dict[str, Any]]:
             store.approved_results_for_area(settings.source_election_id, area_id),
         )
         approved_results = apply_district_summary_overrides(effective_results)
-        if approved_results:
-            results.append(approved_results[0])
+        result = interpreted_area_result(approved_results, mode)
+        if result:
+            results.append(result)
     return results
 
 
@@ -2412,6 +2404,7 @@ def _build_monitor_districts_response() -> dict[str, Any]:
         candidates_by_number = {}
 
     area_indexes = {}
+    raw_approved_results_by_area = {}
     approved_results_by_area = {}
     bangkok_area_ids = [
         str(district.get("id"))
@@ -2431,9 +2424,10 @@ def _build_monitor_districts_response() -> dict[str, Any]:
         if area_id in indexed_area_ids:
             try:
                 index = store.area_submissions(settings.source_election_id, area_id) or {}
+                raw_approved_results = store.approved_results_for_area(settings.source_election_id, area_id)
                 _, effective_results = apply_round_overrides(
                     area_id,
-                    store.approved_results_for_area(settings.source_election_id, area_id),
+                    raw_approved_results,
                 )
                 approved_results = apply_district_summary_overrides(effective_results)
             except BotoCoreError as exc:
@@ -2443,14 +2437,17 @@ def _build_monitor_districts_response() -> dict[str, Any]:
                 ) from exc
         else:
             index = {}
+            raw_approved_results = []
             approved_results = []
         area_indexes[area_id] = index
+        raw_approved_results_by_area[area_id] = raw_approved_results
         approved_results_by_area[area_id] = approved_results
 
     return build_monitor_districts(
         district_catalog=districts_by_id,
         area_indexes=area_indexes,
         approved_results_by_area=interpreted_results_by_area(approved_results_by_area, mode),
+        raw_approved_results_by_area=raw_approved_results_by_area,
         candidate_catalog=candidates_by_number,
         election_id=settings.election_id,
         delayed_after_minutes=settings.delayed_after_minutes,
@@ -2514,6 +2511,7 @@ def get_monitor_district(area_id: str, limit: int = Query(default=20, ge=1, le=2
         district_catalog={area_id: district},
         area_indexes={area_id: index},
         approved_results_by_area={area_id: [interpreted_result] if interpreted_result else []},
+        raw_approved_results_by_area={area_id: approved_results},
         candidate_catalog=candidates_by_number,
         election_id=settings.election_id,
         delayed_after_minutes=settings.delayed_after_minutes,

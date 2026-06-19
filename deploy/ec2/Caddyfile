@@ -15,6 +15,11 @@
 		reverse_proxy results-api:8080
 	}
 
+	@monitor path /monitor
+	handle @monitor {
+		reverse_proxy results-api:8080
+	}
+
 	handle /health {
 		respond "ok" 200
 	}

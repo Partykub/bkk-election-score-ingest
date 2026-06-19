@@ -212,6 +212,14 @@ def build_approval_guidance_text() -> str:
     return 'หากต้องการรับรองผล กรุณาพิมพ์ "ยืนยัน" ให้ถูกต้องอีกครั้ง'
 
 
+def build_missing_area_guidance_text() -> str:
+    return 'ร่างนี้ยังไม่พบเขต จึงยังบันทึกผลเข้าระบบไม่ได้\nกรุณาตอบ เช่น "แก้ไข เขต 13" เพื่อระบุเขตให้ถูกต้องก่อน แล้วค่อยยืนยันอีกครั้ง'
+
+
+def build_missing_candidate_scores_guidance_text() -> str:
+    return 'ร่างนี้ยังไม่พบคะแนนผู้สมัคร จึงยังบันทึกผลเข้าระบบไม่ได้\nกรุณาตอบแก้ไขคะแนนผ่านแชท เช่น "แก้ไข 4=14" ก่อน แล้วค่อยยืนยันอีกครั้ง'
+
+
 def build_pending_approval_fallback_text() -> str:
     return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14" หรือหากต้องการปฏิเสธร่างนี้ให้ตอบ "ไม่ถูกต้อง"'
 
@@ -427,29 +435,38 @@ def build_line_correction_liff_url() -> str | None:
     return f"https://liff.line.me/{liff_id}"
 
 
-def build_approval_quick_reply_items(*, correction_url: str | None = None) -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
-        },
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
-        },
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
-        },
-    ]
+def build_approval_quick_reply_items(*, correction_url: str | None = None, allow_approve: bool = True) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if allow_approve:
+        items.append(
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
+            }
+        )
+    items.extend(
+        [
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
+            },
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
+            },
+        ]
+    )
+    return items
 
 
-def build_approval_action_messages(text: str, *, correction_url: str | None = None) -> list[dict[str, Any]]:
+def build_approval_action_messages(text: str, *, correction_url: str | None = None, allow_approve: bool = True) -> list[dict[str, Any]]:
     message = build_line_text_message(text)
-    message["quickReply"] = {"items": build_approval_quick_reply_items(correction_url=correction_url)}
+    message["quickReply"] = {
+        "items": build_approval_quick_reply_items(correction_url=correction_url, allow_approve=allow_approve)
+    }
     return [message]
 
 
@@ -584,6 +601,17 @@ def normalize_candidate_scores(candidate_scores: Any) -> list[dict[str, Any]]:
     return normalized_scores
 
 
+def draft_has_approvable_candidate_scores(draft_manifest: dict[str, Any]) -> bool:
+    return any(
+        score.get("candidate_number") is not None and score.get("score") is not None
+        for score in normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+    )
+
+
+def draft_can_be_approved(draft_manifest: dict[str, Any]) -> bool:
+    return bool(str(draft_manifest.get("area_id") or "").strip()) and draft_has_approvable_candidate_scores(draft_manifest)
+
+
 def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     revision = int(draft_manifest.get("revision") or 1)
     report_type = str(draft_manifest.get("report_type") or "score_sheet").strip()
@@ -595,6 +623,8 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
     if area_id:
         lines.append(f"เขต: {area_id}")
+    else:
+        lines.append("เขต: ยังไม่พบ")
     if polling_unit_id:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
@@ -609,7 +639,17 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     elif not ballot_summary_lines:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
-    lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
+    if not area_id:
+        lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะระบุเขต")
+        lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
+        lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
+
+    if not draft_has_approvable_candidate_scores(draft_manifest):
+        lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะมีคะแนนผู้สมัคร")
+        lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
+
+    if draft_can_be_approved(draft_manifest):
+        lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
     lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
@@ -1319,7 +1359,11 @@ class LocalStateStore:
             correction_url = build_correction_form_url_for_source_manifest(source_manifest)
             self.line_push_sender(
                 destination_id=destination_id,
-                messages=build_approval_action_messages(build_approval_prompt_text(draft_manifest), correction_url=correction_url),
+                messages=build_approval_action_messages(
+                    build_approval_prompt_text(draft_manifest),
+                    correction_url=correction_url,
+                    allow_approve=draft_can_be_approved(draft_manifest),
+                ),
             )
             self._update_approval_prompt_status(
                 source_manifest=source_manifest,
@@ -1439,6 +1483,12 @@ class LocalStateStore:
             return
 
         if self._source_waits_correction_input(target_source_manifest):
+            if (manifest.get("exception") or {}).get("code") == "AREA_ID_REQUIRED":
+                self._reply_text(manifest, build_missing_area_guidance_text())
+                return
+            if (manifest.get("exception") or {}).get("code") == "CANDIDATE_SCORES_REQUIRED":
+                self._reply_text(manifest, build_missing_candidate_scores_guidance_text())
+                return
             self._reply_text(manifest, build_correction_guidance_text())
             return
 
@@ -1681,6 +1731,29 @@ class LocalStateStore:
                     "normalized_action": action,
                     "candidate_score_overrides": [],
                     "requires_manual_review": True,
+                }
+                return manifest["state"], target_source_message_id
+
+        if action == "approve":
+            area_id = str(draft_manifest.get("area_id") or "").strip()
+            if not area_id:
+                target_source_manifest["pending_user_action"] = "awaiting_correction_input"
+                target_source_manifest["updated_at"] = timestamp
+                self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
+                manifest["state"] = "exception"
+                manifest["exception"] = {
+                    "code": "AREA_ID_REQUIRED",
+                    "message": "draft is missing area_id and cannot be approved yet",
+                }
+                return manifest["state"], target_source_message_id
+            if not draft_has_approvable_candidate_scores(draft_manifest):
+                target_source_manifest["pending_user_action"] = "awaiting_correction_input"
+                target_source_manifest["updated_at"] = timestamp
+                self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
+                manifest["state"] = "exception"
+                manifest["exception"] = {
+                    "code": "CANDIDATE_SCORES_REQUIRED",
+                    "message": "draft is missing candidate scores and cannot be approved yet",
                 }
                 return manifest["state"], target_source_message_id
 

@@ -260,6 +260,159 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertIn("ผู้สมัคร 1: 120", reply_sender.messages[0]["text"])
         self.assertIsNone(reply_sender.messages[0]["messages"])
 
+    def test_approval_command_with_missing_area_requires_correction_before_save(self) -> None:
+        s3_client = _RecordingS3Client()
+        queue_client = _RecordingQueueClient()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=queue_client,
+        )
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            update_job_queue=update_job_queue,
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE777A",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE777A_r1",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777A/draft_r1.json",
+            "current_approval_id": "approval_src_01JXIMAGE777A_r1",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777A/approval_r1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE777A_r1",
+            "draft_id": "draft_src_01JXIMAGE777A_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE777A_r1",
+            "result_signature": "unknown-area:1=120|2=90",
+            "election_id": "election-2026",
+            "area_id": None,
+            "polling_unit_id": "07",
+            "report_type": "election_score_sheet",
+            "candidate_scores": [{"candidate_number": 1, "score": 120}],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE777A",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777A/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777A/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777A/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXAPPROVE777A",
+                "replyToken": "reply-token-approve-a",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000777A", "type": "text", "text": "ยืนยัน"},
+            },
+            received_at="2026-06-08T07:45:00Z",
+        )
+
+        self.assertEqual(result.state, "exception")
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777A/manifest.json")].decode("utf-8"))
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777A/approval_r1.json")].decode("utf-8"))
+        self.assertEqual(updated_source["state"], "awaiting_approval")
+        self.assertEqual(updated_source["pending_user_action"], "awaiting_correction_input")
+        self.assertEqual(updated_approval["state"], "awaiting_approval")
+        self.assertEqual(len(queue_client.messages), 0)
+        self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE777A/update_job.json"), s3_client.objects)
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertIn("ยังไม่พบเขต", reply_sender.messages[0]["text"])
+        self.assertIn("แก้ไข เขต 13", reply_sender.messages[0]["text"])
+
+    def test_approval_command_with_missing_candidate_scores_requires_correction_before_save(self) -> None:
+        s3_client = _RecordingS3Client()
+        queue_client = _RecordingQueueClient()
+        reply_sender = _RecordingReplySender()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=queue_client,
+        )
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            update_job_queue=update_job_queue,
+            line_reply_sender=reply_sender,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE777B",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE777B_r1",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777B/draft_r1.json",
+            "current_approval_id": "approval_src_01JXIMAGE777B_r1",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777B/approval_r1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE777B_r1",
+            "draft_id": "draft_src_01JXIMAGE777B_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE777B_r1",
+            "election_id": "election-2026",
+            "area_id": "13",
+            "polling_unit_id": "07",
+            "report_type": "election_score_sheet",
+            "candidate_scores": [],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE777B",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777B/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777B/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777B/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXAPPROVE777B",
+                "replyToken": "reply-token-approve-b",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000777B", "type": "text", "text": "ยืนยัน"},
+            },
+            received_at="2026-06-08T07:45:00Z",
+        )
+
+        self.assertEqual(result.state, "exception")
+        updated_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777B/manifest.json")].decode("utf-8"))
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777B/approval_r1.json")].decode("utf-8"))
+        self.assertEqual(updated_source["state"], "awaiting_approval")
+        self.assertEqual(updated_source["pending_user_action"], "awaiting_correction_input")
+        self.assertEqual(updated_approval["state"], "awaiting_approval")
+        self.assertEqual(len(queue_client.messages), 0)
+        self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE777B/update_job.json"), s3_client.objects)
+        self.assertEqual(len(reply_sender.messages), 1)
+        self.assertIn("ยังไม่พบคะแนนผู้สมัคร", reply_sender.messages[0]["text"])
+        self.assertIn("แก้ไข 4=14", reply_sender.messages[0]["text"])
+
     def test_correction_command_creates_corrected_draft_and_new_approval(self) -> None:
         s3_client = _RecordingS3Client()
         push_sender = _RecordingPushSender()
@@ -338,7 +491,11 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(len(push_sender.messages), 1)
         self.assertEqual(push_sender.messages[0]["destination_id"], "U123")
         self.assertIn("ร่างครั้งที่ 2", push_sender.messages[0]["messages"][0]["text"])
-        self.assertEqual(push_sender.messages[0]["messages"][0]["quickReply"]["items"][0]["action"]["text"], "ยืนยัน")
+        self.assertIn("กรุณาระบุเขต", push_sender.messages[0]["messages"][0]["text"])
+        quick_reply_actions = [
+            item["action"]["text"] for item in push_sender.messages[0]["messages"][0]["quickReply"]["items"]
+        ]
+        self.assertEqual(quick_reply_actions, ["แก้ไข", "ไม่ถูกต้อง"])
         self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE888/update_job.json"), s3_client.objects)
 
     def test_reject_command_replies_with_closed_round_message(self) -> None:
@@ -1420,9 +1577,11 @@ class LocalStateStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.state, "awaiting_approval")
-        correction_action = push_sender.messages[0]["messages"][0]["quickReply"]["items"][1]["action"]
-        self.assertEqual(correction_action["type"], "message")
-        self.assertEqual(correction_action["text"], "แก้ไข")
+        quick_reply_actions = [
+            item["action"] for item in push_sender.messages[0]["messages"][0]["quickReply"]["items"]
+        ]
+        self.assertTrue(quick_reply_actions)
+        self.assertTrue(all(action["type"] == "message" for action in quick_reply_actions))
 
 
 class ReviewQueueTests(unittest.TestCase):

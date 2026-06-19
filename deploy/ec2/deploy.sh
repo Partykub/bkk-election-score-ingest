@@ -31,8 +31,8 @@ hermes_runtime_dir="$(
 
 if [[ -n "$openai_api_base" && -n "$hermes_runtime_dir" &&
       -f "$hermes_runtime_dir/config.yaml" ]]; then
-  sed -i \
-    "0,/^[[:space:]]*base_url:/s#^[[:space:]]*base_url:.*#  base_url: ${openai_api_base}#" \
+  sed -Ei \
+    "0,/^[[:space:]]*base_url:/s#^([[:space:]]*)base_url:.*#\1base_url: ${openai_api_base}#" \
     "$hermes_runtime_dir/config.yaml"
 fi
 

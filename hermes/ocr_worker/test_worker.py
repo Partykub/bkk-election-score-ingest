@@ -303,6 +303,47 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertIn("candidate_number_unreadable", draft_manifest["validation_flags"])
         self.assertIn("candidate_number_unreadable", draft_manifest["normalization_warnings"])
 
+    def test_build_draft_documents_records_ballot_summary_fields(self):
+        downloaded_job = DownloadedJob(
+            ocr_job_id="ocr_20260610_0010",
+            source_message_id="src_20260610_0010",
+            workflow_session_id="line_user_U123",
+            manifest_bucket="bucket-a",
+            manifest_key="api-data/score/messages/src_20260610_0010/ocr_job.json",
+            input_bucket="bucket-a",
+            input_key="api-data/score/messages/src_20260610_0010/original.bin",
+            input_size_bytes=8,
+            input_content_type="image/jpeg",
+            queue_message_id="msg-10",
+            receipt_handle="receipt-10",
+        )
+
+        draft_manifest, _, _ = build_draft_documents(
+            downloaded_job=downloaded_job,
+            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1", "model_name": "gemma-vision"}},
+            normalized_payload={
+                "document_type": "election_score_sheet",
+                "eligibleVoters": "100",
+                "voterTurnout": 80,
+                "validBallots": "70",
+                "invalidBallots": 5,
+                "abstainedBallots": "5",
+                "validation_flags": [],
+                "image_quality_flags": [],
+                "overall_confidence": 0.95,
+                "candidate_scores": [],
+            },
+            raw_model_text="{}",
+            revision=1,
+            timestamp="2026-06-10T08:00:00Z",
+        )
+
+        self.assertEqual(draft_manifest["eligible_voters"], 100)
+        self.assertEqual(draft_manifest["voter_turnout"], 80)
+        self.assertEqual(draft_manifest["valid_ballots"], 70)
+        self.assertEqual(draft_manifest["invalid_ballots"], 5)
+        self.assertEqual(draft_manifest["vote_no"], 5)
+
     def test_build_ocr_prompt_allows_handwritten_score_lists(self):
         downloaded_job = DownloadedJob(
             ocr_job_id="ocr_20260610_0001",
@@ -320,7 +361,8 @@ class WorkerProcessingTests(unittest.TestCase):
 
         prompt = build_ocr_prompt(downloaded_job=downloaded_job, model_name=self.config.model_name, prompt_version="ocr-v1")
 
-        self.assertIn("ข้อความที่เขียนด้วยลายมือ", prompt)
+        self.assertIn("sticky note", prompt)
+        self.assertIn("ห้ามเดา area_id", prompt)
         self.assertIn("ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน", prompt)
         self.assertIn('"candidate_scores"', prompt)
 
@@ -334,6 +376,11 @@ class WorkerProcessingTests(unittest.TestCase):
                 "polling_unit_id": "12",
                 "overall_confidence": 0.95,
                 "validation_flags": ["requires_human_review"],
+                "eligible_voters": 100,
+                "voter_turnout": 80,
+                "valid_ballots": 70,
+                "invalid_ballots": 5,
+                "vote_no": 5,
                 "candidate_scores": [
                     {"candidate_number": 1, "score": 120},
                     {"candidate_number": 2, "score": 90},
@@ -347,6 +394,55 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertNotIn("ธงตรวจสอบ:", prompt)
         self.assertIn("ตอบ 'ยืนยัน'", prompt)
         self.assertIn("ตอบ 'ไม่ถูกต้อง'", prompt)
+
+    def test_build_approval_prompt_text_includes_ballot_summary(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "election_score_sheet",
+                "eligible_voters": 100,
+                "voter_turnout": 80,
+                "valid_ballots": 70,
+                "invalid_ballots": 5,
+                "vote_no": 5,
+                "candidate_scores": [],
+            }
+        )
+
+        self.assertIn("\u0e1c\u0e39\u0e49\u0e21\u0e35\u0e2a\u0e34\u0e17\u0e18\u0e34: 100", prompt)
+        self.assertIn("\u0e1c\u0e39\u0e49\u0e21\u0e32\u0e43\u0e0a\u0e49\u0e2a\u0e34\u0e17\u0e18\u0e34: 80", prompt)
+        self.assertIn("\u0e1a\u0e31\u0e15\u0e23\u0e14\u0e35: 70", prompt)
+        self.assertIn("\u0e1a\u0e31\u0e15\u0e23\u0e40\u0e2a\u0e35\u0e22: 5", prompt)
+        self.assertIn("Vote No: 5", prompt)
+
+    def test_build_approval_prompt_text_warns_when_candidate_scores_missing(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "election_score_sheet",
+                "area_id": "13",
+                "candidate_scores": [],
+            }
+        )
+
+        self.assertIn("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะมีคะแนนผู้สมัคร", prompt)
+        self.assertIn("แก้ไข 4=14", prompt)
+        self.assertNotIn("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้", prompt)
+
+    def test_build_approval_prompt_text_warns_when_area_missing(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "election_score_sheet",
+                "candidate_scores": [{"candidate_number": 1, "score": 40}],
+            }
+        )
+
+        self.assertIn("เขต: ยังไม่พบ", prompt)
+        self.assertIn("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะระบุเขต", prompt)
+        self.assertIn("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก", prompt)
+        self.assertIn("แก้ไข เขต 13", prompt)
+        self.assertNotIn("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้", prompt)
 
     def test_send_line_push_message_posts_expected_payload(self):
         opener = _RecordingUrlOpen()
@@ -424,6 +520,43 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertEqual(updated_manifest["approval_prompt"]["draft_id"], "draft_src_20260609_0004_r1")
         payload = json.loads(opener.requests[0]["body"].decode("utf-8"))
         self.assertEqual(payload["messages"][0]["quickReply"]["items"][1]["action"]["text"], "แก้ไข")
+
+    def test_maybe_send_approval_prompt_hides_approve_button_when_area_missing(self):
+        source_manifest_path = "api-data/score/messages/src_20260609_0004/manifest.json"
+        source_manifest = {
+            "source_message_id": "src_20260609_0004",
+            "sender_user_id": "U123",
+            "sender_group_id": None,
+            "sender_room_id": None,
+        }
+        s3_client = _FakeS3Client({("bucket-a", source_manifest_path): json.dumps(source_manifest).encode("utf-8")})
+        opener = _RecordingUrlOpen()
+        draft_manifest = {
+            "draft_id": "draft_src_20260609_0004_r1",
+            "revision": 1,
+            "report_type": "election_score_sheet",
+            "area_id": None,
+            "overall_confidence": 0.95,
+            "validation_flags": ["missing_area_id", "requires_human_review"],
+            "candidate_scores": [{"candidate_number": 1, "score": 120}],
+        }
+
+        result = maybe_send_approval_prompt(
+            s3_client=s3_client,
+            bucket="bucket-a",
+            source_manifest_path=source_manifest_path,
+            source_manifest=source_manifest,
+            draft_manifest=draft_manifest,
+            config=self.config,
+            timestamp="2026-06-09T10:00:00Z",
+            opener=opener,
+        )
+
+        self.assertEqual(result["status"], "sent")
+        payload = json.loads(opener.requests[0]["body"].decode("utf-8"))
+        actions = [item["action"]["text"] for item in payload["messages"][0]["quickReply"]["items"]]
+        self.assertNotIn("ยืนยัน", actions)
+        self.assertEqual(actions, ["แก้ไข", "ไม่ถูกต้อง"])
 
     def test_build_runtime_config_log_redacts_secrets(self):
         payload = build_runtime_config_log(self.config)

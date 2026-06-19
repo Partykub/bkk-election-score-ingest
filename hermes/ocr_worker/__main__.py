@@ -477,6 +477,17 @@ def normalize_candidate_scores(raw_scores: Any) -> list[dict[str, Any]]:
     return normalized_scores
 
 
+def draft_has_approvable_candidate_scores(draft_manifest: dict[str, Any]) -> bool:
+    return any(
+        score.get("candidate_number") is not None and score.get("score") is not None
+        for score in normalize_candidate_scores(draft_manifest.get("candidate_scores"))
+    )
+
+
+def draft_can_be_approved(draft_manifest: dict[str, Any]) -> bool:
+    return bool(str(draft_manifest.get("area_id") or "").strip()) and draft_has_approvable_candidate_scores(draft_manifest)
+
+
 def ensure_string_list(values: Any) -> list[str]:
     if not isinstance(values, list):
         return []
@@ -565,6 +576,8 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
     if area_id:
         lines.append(f"เขต: {area_id}")
+    else:
+        lines.append("เขต: ยังไม่พบ")
     if polling_unit_id:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
@@ -584,7 +597,17 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     elif not ballot_summary_lines:
         lines.append("ยังไม่พบคะแนนที่เชื่อถือได้จาก OCR")
 
-    lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
+    if not area_id:
+        lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะระบุเขต")
+        lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
+        lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
+
+    if not draft_has_approvable_candidate_scores(draft_manifest):
+        lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะมีคะแนนผู้สมัคร")
+        lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
+
+    if draft_can_be_approved(draft_manifest):
+        lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
     lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
@@ -600,28 +623,37 @@ def build_line_correction_liff_url() -> str | None:
     return f"https://liff.line.me/{liff_id}"
 
 
-def build_approval_quick_reply_items(*, correction_url: str | None = None) -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
-        },
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
-        },
-        {
-            "type": "action",
-            "imageUrl": None,
-            "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
-        },
-    ]
+def build_approval_quick_reply_items(*, correction_url: str | None = None, allow_approve: bool = True) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if allow_approve:
+        items.append(
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "ยืนยัน", "text": "ยืนยัน"},
+            }
+        )
+    items.extend(
+        [
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "แก้ไข", "text": "แก้ไข"},
+            },
+            {
+                "type": "action",
+                "imageUrl": None,
+                "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
+            },
+        ]
+    )
+    return items
 
-def build_approval_action_messages(text: str, *, correction_url: str | None = None) -> list[dict[str, Any]]:
+def build_approval_action_messages(text: str, *, correction_url: str | None = None, allow_approve: bool = True) -> list[dict[str, Any]]:
     message = build_line_text_message(text)
-    message["quickReply"] = {"items": build_approval_quick_reply_items(correction_url=correction_url)}
+    message["quickReply"] = {
+        "items": build_approval_quick_reply_items(correction_url=correction_url, allow_approve=allow_approve)
+    }
     return [message]
 
 
@@ -704,7 +736,11 @@ def maybe_send_approval_prompt(
         send_line_push_message(
             channel_access_token=config.line_channel_access_token,
             destination_id=destination_id,
-            messages=build_approval_action_messages(build_approval_prompt_text(draft_manifest), correction_url=correction_url),
+            messages=build_approval_action_messages(
+                build_approval_prompt_text(draft_manifest),
+                correction_url=correction_url,
+                allow_approve=draft_can_be_approved(draft_manifest),
+            ),
             api_base_url=config.line_api_base_url,
             opener=opener,
         )
@@ -833,9 +869,9 @@ def maybe_send_ocr_failure_notice(
 def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_version: str) -> str:
     return (
         "คุณคือผู้ช่วยดึงข้อมูลจากรูปภาพใบนับคะแนนเลือกตั้ง (ภาษาไทย) "
-        "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่เขียนด้วยลายมือบนหัวกระดาษ เช่น 'เขต 3' หรือบางครั้งอาจจะอ่านคล้ายๆ 'เลข 3', '69' ขอให้ตีความว่าเป็นหมายเลขเขต (area_id) "
+        "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่ใช้ระบุเขตของเอกสาร เช่น 'เขต 3', 'เขตเลือกตั้ง 3', 'ลำดับเขต 3' หรือ sticky note/ข้อความกำกับด้านบนของภาพที่ใช้ระบุเขต (area_id) "
         "ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน และให้หาข้อมูลสรุปจำนวนบัตรด้วย ได้แก่ ผู้มีสิทธิเลือกตั้ง (eligible_voters), ผู้มาใช้สิทธิ (voter_turnout), บัตรดี (valid_ballots), บัตรเสีย (invalid_ballots), และไม่ประสงค์ลงคะแนน/ไม่ออกคะแนน (vote_no) จากนั้นนำข้อมูลทั้งหมดมาจัดเรียงในรูปแบบ JSON ตามโครงสร้างด้านล่างนี้เท่านั้น ห้ามพิมพ์ข้อความอธิบายใดๆ เพิ่มเติม หากไม่พบข้อมูลใดให้ใส่ null\n\n"
-        "ข้อควรระวัง: สังเกตข้อความมุมซ้ายบนหรือขวาบนของกระดาษให้ดี หากพบตัวเลขเดี่ยวๆ หรือคำว่า 'เขต' หรือ 'เลข' ตามด้วยตัวเลข ให้ใส่ตัวเลขนั้นในช่อง 'area_id' ทันที (เช่น เขต 3 -> area_id: \"3\")\n\n"
+        "ข้อควรระวัง: ให้หา area_id จากบริบทที่เป็นป้ายระบุเขตของเอกสาร ไม่ใช่จากตารางคะแนนผู้สมัครหรือเลขลำดับแถว ห้ามเดา area_id จากคะแนน, หมายเลขผู้สมัคร, หมายเลขหน่วย, หรือเลขอื่นที่ไม่ชัดว่าเป็นเขต หากไม่แน่ใจให้ใส่ null\n\n"
         "ตัวอย่างถ้าในรูปมีข้อความ 'เขต 3', มีผู้มีสิทธิ 100, ผู้มาใช้สิทธิ 80, บัตรดี 70, บัตรเสีย 5, ไม่ออกคะแนน 5, และมีคะแนนเบอร์ 1 ได้ 120 คะแนน ให้ตอบ JSON แบบนี้:\n"
         "{\n"
         '  "document_type": "election_score_sheet",\n'
@@ -980,6 +1016,8 @@ def build_draft_documents(
         validation_flags = sorted(set(validation_flags + ["low_confidence", "requires_human_review"]))
 
     area_id = normalized_payload.get("area_id")
+    if area_id is None or str(area_id).strip() == "":
+        validation_flags = sorted(set(validation_flags + ["missing_area_id", "requires_human_review"]))
     eligible_voters = normalize_optional_int(normalized_payload, "eligible_voters", "eligibleVoters")
     voter_turnout = normalize_optional_int(normalized_payload, "voter_turnout", "voterTurnout")
     valid_ballots = normalize_optional_int(normalized_payload, "valid_ballots", "validBallots")
