@@ -17,6 +17,7 @@
     "validBallots": 1958000,
     "invalidBallots": 30000,
     "abstainedBallots": 20000,
+    "% บัตรเสีย": 10,
     "lastUpdatedAt": "2026-06-05T11:25:02.000Z"
   },
   "candidates": [

@@ -16,14 +16,20 @@
         "validBallots": 1958000,
         "invalidBallots": 30000,
         "abstainedBallots": 20000,
-        "% บัตรเสีย": 10,
         "lastUpdatedAt": "2026-06-05T11:25:02.000Z",
+        "% บัตรเสีย": 10,
         "candidates": [
           {
-            "candidateId": "korakasivat",
+            "candidateId": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
             "candidateNumber": 1,
             "name": "กรกสิวัฒน์ เกษมศรี",
-            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/candidate.png",
+            "party": {
+              "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+              "name": "ประชาธิปัตย์",
+              "color": "#016DDF",
+              "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png",
+              "totalSeat": 20
+            },
             "color": "#F76198",
             "voteCount": 70,
             "votePercentage": 35.0,
