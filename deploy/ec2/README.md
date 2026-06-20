@@ -64,9 +64,27 @@ ENV_PARAMETER=/election/compose-env ./deploy/ec2/deploy.sh
 ใช้ `deploy/ec2/bootstrap.sh` ติดตั้ง Docker, Compose, Buildx และ swap
 บน Amazon Linux 2023 เมื่อสร้างเครื่องใหม่
 
-`deploy.sh` จะ sync ค่า `OPENAI_API_BASE` จาก `.env` ไปยัง
+`deploy.sh` จะ sync ค่า `OLLAMA_API_BASE` หรือ `OPENAI_API_BASE` จาก `.env` ไปยัง
 `HERMES_RUNTIME_DIR/config.yaml` ก่อน restart container เพื่อป้องกัน runtime
 เก่าชี้กลับไปที่ `host.docker.internal`
+
+ถ้าต้องการย้ายจาก OpenRouter ไปใช้ Ollama ที่ปล่อยผ่าน `ngrok` ให้ตั้งค่าใน
+SSM parameter หรือ `.env` ประมาณนี้:
+
+```dotenv
+HERMES_MODEL=gemma4:26b
+OLLAMA_API_BASE=https://stranger-lanky-outmost.ngrok-free.dev/v1
+OPENROUTER_API_KEY=
+OPENAI_API_KEY=
+MODEL_API_KEY=
+```
+
+หมายเหตุ:
+
+- endpoint ต้องเป็น OpenAI-compatible path ที่ลงท้ายด้วย `/v1`
+- ถ้า ngrok หรือ reverse proxy ของปลายทางมี auth เพิ่ม ให้ใส่ token ใน
+  `MODEL_API_KEY` และตั้ง runtime provider ให้ใช้ `key_env: MODEL_API_KEY`
+- ถ้ายังใช้ชื่อ env เดิม `OPENAI_API_BASE` อยู่ ระบบยังทำงานได้เหมือนเดิม
 
 ตรวจสถานะ:
 
@@ -100,4 +118,5 @@ tag `latest` ใน production เพื่อให้ rollback กลับไ
 
 EC2 เครื่องเดียวเป็น Single Point of Failure ระหว่าง reboot หรือ deploy จะมี
 downtime และไม่รองรับ autoscaling อัตโนมัติ เมื่อ SLA ต้องสูงหรือ workload
-เพิ่มจนเครื่องเดียวไม่พอ ให้ย้ายไป ECS Fargate ตาม `infra/ecs/README.md`
+เพิ่มจนเครื่องเดียวไม่พอ ให้แยกบริการออกจาก EC2 เครื่องเดียวและออกแบบ
+deployment ใหม่จากสถานะ production ปัจจุบัน

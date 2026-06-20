@@ -24,11 +24,6 @@
 9. OCR Worker เขียน draft revision ลง S3
 10. OCR Worker อัปเดต `ocr job manifest` และ `source message manifest`
 
-หมายเหตุ:
-
-- โฟลเดอร์ `paddle_ocr/` ใน repo เป็นพื้นที่ทดลอง ไม่ใช่เส้นทาง production ของ OCR worker
-- baseline ปัจจุบันไม่พึ่ง `n8n` ใน critical path ของ OCR flow
-
 ## ที่อยู่ของ OCR job manifest
 
 ```text
@@ -37,8 +32,8 @@ manifests/ocr-jobs/{ocr_job_id}.json
 
 กติกา:
 
-- schema ของ `ocr job manifest` ควรสอดคล้องกับ [005_s3_manifest_schema.md](d:/ch7/election/storage/schema/005_s3_manifest_schema.md) ในเรื่อง `schema_version`, `entity_type`, `entity_id`, และ key naming
-- ถ้ามีความขัดกันระหว่างเอกสารนี้กับ schema รวม ให้ยึด field conventions ใน [005_s3_manifest_schema.md](d:/ch7/election/storage/schema/005_s3_manifest_schema.md) เป็นหลัก แล้วใช้เอกสารนี้อธิบาย behavior ของ OCR worker เพิ่มเติม
+- schema ของ `ocr job manifest` ควรสอดคล้องกับ [005_s3_manifest_schema.md](005_s3_manifest_schema.md) ในเรื่อง `schema_version`, `entity_type`, `entity_id`, และ key naming
+- ถ้ามีความขัดกันระหว่างเอกสารนี้กับ schema รวม ให้ยึด field conventions ใน [005_s3_manifest_schema.md](005_s3_manifest_schema.md) เป็นหลัก แล้วใช้เอกสารนี้อธิบาย behavior ของ OCR worker เพิ่มเติม
 
 ## OCR job manifest
 
@@ -140,7 +135,7 @@ drafts/{source_message_id}/latest.json
 
 - `revision-{revision}.json` เป็น immutable artifact ของแต่ละรอบ OCR
 - `latest.json` เป็น pointer ไปยัง draft revision ล่าสุด และควรถูกอัปเดตทุกครั้งที่ worker เขียน draft ใหม่สำเร็จ
-- schema ของ draft ควรสอดคล้องกับ [005_s3_manifest_schema.md](d:/ch7/election/storage/schema/005_s3_manifest_schema.md)
+- schema ของ draft ควรสอดคล้องกับ [005_s3_manifest_schema.md](005_s3_manifest_schema.md)
 
 ### ตัวอย่าง draft
 
@@ -301,8 +296,7 @@ OCR Worker ควร log อย่างน้อย:
 - `input.key`
 - `draft_id` หรือ `error.code`
 
-## งานถัดจาก spec นี้
+## Related contracts
 
-1. เพิ่ม checklist ใน `plan.md` ว่า OCR job payload spec เสร็จแล้ว
-2. นิยาม approval payload/command contract ต่อ
-3. เริ่ม implement ฝั่ง Supervisor ให้เขียน `ocr job manifest` ได้จริง
+- [005_s3_manifest_schema.md](005_s3_manifest_schema.md)
+- [006_approval_contract.md](006_approval_contract.md)

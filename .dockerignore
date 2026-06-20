@@ -8,18 +8,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+runtime/
 hermes/supervisor/runtime/
 hermes/supervisor/runtime-full/
 hermes/supervisor/runtime-ec2/
-hermes/supervisor/ollama/data/
-hermes/supervisor/data/
 hermes/ocr_worker/runtime/
 hermes/ocr_worker/runtime-ec2/
 hermes/ocr_worker/.cache/
-
-paddle_ocr/output/
-paddle_ocr/img/
-
-n8n/code/
 
 *.log

@@ -14,10 +14,10 @@
 
 ## ความสัมพันธ์กับ schema หลัก
 
-- schema ของ approval manifest ต้องสอดคล้องกับ [005_s3_manifest_schema.md](d:/ch7/election/storage/schema/005_s3_manifest_schema.md)
+- schema ของ approval manifest ต้องสอดคล้องกับ [005_s3_manifest_schema.md](005_s3_manifest_schema.md)
 - draft ที่ถูกขออนุมัติต้องอ้างอิง draft revision ล่าสุดจาก `drafts/{source_message_id}/latest.json`
 - เมื่อ approval สำเร็จ ระบบต้องอัปเดต pointer ใน `manifests/source-messages/{source_message_id}.json`
-- ถ้ามีความขัดกันระหว่างเอกสารนี้กับ schema รวม ให้ยึด field conventions ใน [005_s3_manifest_schema.md](d:/ch7/election/storage/schema/005_s3_manifest_schema.md) เป็นหลัก
+- ถ้ามีความขัดกันระหว่างเอกสารนี้กับ schema รวม ให้ยึด field conventions ใน [005_s3_manifest_schema.md](005_s3_manifest_schema.md) เป็นหลัก
 
 ## ภาพรวม flow
 

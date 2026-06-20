@@ -1123,7 +1123,7 @@ class LocalStateStore:
             "expected_document_type": os.environ.get("SUPERVISOR_OCR_DOCUMENT_TYPE", "election_score_sheet").strip()
             or "election_score_sheet",
             "prompt_version": os.environ.get("SUPERVISOR_OCR_PROMPT_VERSION", "ocr-v1").strip() or "ocr-v1",
-            "model_name": os.environ.get("OCR_WORKER_MODEL_NAME", "gemma-vision").strip() or "gemma-vision",
+            "model_name": os.environ.get("OCR_WORKER_MODEL_NAME", "gemma4:26b").strip() or "gemma4:26b",
         }
 
     def _queue_name(self) -> str:

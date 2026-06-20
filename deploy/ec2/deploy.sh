@@ -18,8 +18,11 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-openai_api_base="$(
-  sed -n 's/^OPENAI_API_BASE=//p' .env |
+model_api_base="$(
+  {
+    sed -n 's/^OLLAMA_API_BASE=//p' .env
+    sed -n 's/^OPENAI_API_BASE=//p' .env
+  } |
     tail -n 1 |
     sed -e 's/^"//' -e 's/"$//'
 )"
@@ -29,10 +32,10 @@ hermes_runtime_dir="$(
     sed -e 's/^"//' -e 's/"$//'
 )"
 
-if [[ -n "$openai_api_base" && -n "$hermes_runtime_dir" &&
+if [[ -n "$model_api_base" && -n "$hermes_runtime_dir" &&
       -f "$hermes_runtime_dir/config.yaml" ]]; then
   sed -Ei \
-    "0,/^[[:space:]]*base_url:/s#^([[:space:]]*)base_url:.*#\1base_url: ${openai_api_base}#" \
+    "0,/^[[:space:]]*base_url:/s#^([[:space:]]*)base_url:.*#\1base_url: ${model_api_base}#" \
     "$hermes_runtime_dir/config.yaml"
 fi
 

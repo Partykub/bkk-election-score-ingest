@@ -134,7 +134,7 @@ class WorkerProcessingTests(unittest.TestCase):
             aws_region="ap-southeast-1",
             s3_bucket="bucket-a",
             s3_prefix="api-data/score",
-            model_name="gemma-vision",
+            model_name="gemma4:26b",
             poll_seconds=15,
             queue_max_messages=1,
             processing_concurrency=1,
@@ -287,7 +287,7 @@ class WorkerProcessingTests(unittest.TestCase):
 
         draft_manifest, _, _ = build_draft_documents(
             downloaded_job=downloaded_job,
-            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1", "model_name": "gemma-vision"}},
+            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1", "model_name": "gemma4:26b"}},
             normalized_payload={
                 "document_type": "election_score_sheet",
                 "candidate_scores": [{"score": 14, "raw_text": "4 | 14"}],
@@ -296,6 +296,7 @@ class WorkerProcessingTests(unittest.TestCase):
                 "overall_confidence": 0.98,
             },
             raw_model_text="{}",
+            model_name="gemma4:26b",
             revision=1,
             timestamp="2026-06-10T06:00:00Z",
         )
@@ -320,7 +321,7 @@ class WorkerProcessingTests(unittest.TestCase):
 
         draft_manifest, _, _ = build_draft_documents(
             downloaded_job=downloaded_job,
-            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1", "model_name": "gemma-vision"}},
+            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1", "model_name": "gemma4:26b"}},
             normalized_payload={
                 "document_type": "election_score_sheet",
                 "eligibleVoters": "100",
@@ -334,6 +335,7 @@ class WorkerProcessingTests(unittest.TestCase):
                 "candidate_scores": [],
             },
             raw_model_text="{}",
+            model_name="gemma4:26b",
             revision=1,
             timestamp="2026-06-10T08:00:00Z",
         )

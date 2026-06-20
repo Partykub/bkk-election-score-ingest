@@ -1,9 +1,11 @@
 /.env
+.venv/
+.venv-*/
 hermes/supervisor/.env
+runtime/
 hermes/supervisor/runtime/
 hermes/supervisor/runtime-full/
 hermes/supervisor/runtime-ec2/
-hermes/supervisor/ollama/
 hermes/supervisor/cloudflared/config.yml
 hermes/supervisor/cloudflared/*.json
 hermes/ocr_worker/runtime/
@@ -12,4 +14,3 @@ hermes/ocr_worker/runtime-ec2/
 paddle_ocr/
 __pycache__/
 *.pyc
-

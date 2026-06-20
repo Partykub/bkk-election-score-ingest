@@ -18,6 +18,21 @@ docker compose --env-file .env config --quiet
 docker compose --env-file .env up -d --build
 ```
 
+## Tests
+
+Python packages such as `pydantic_core` include native binary wheels, so do not
+share one global Python environment between `arm64` and `x86_64` machines. Create
+an architecture-specific virtualenv instead:
+
+```bash
+./scripts/dev-test-env.sh
+. .venv-$(python3 -c 'import platform; print(platform.machine())')/bin/activate
+python -m pytest
+```
+
+If you intentionally run an x86 Python under Rosetta on Apple Silicon, keep that
+in its own `.venv-x86_64`; native arm64 Python should use `.venv-arm64`.
+
 Endpoints สำหรับพัฒนา:
 
 - Results API: `http://localhost:8080`
@@ -41,11 +56,5 @@ cp .env.example .env
 Caddy เปิดเฉพาะ port `80/443` และออก TLS certificate ให้อัตโนมัติ
 ส่วน port ของ service ภายใน bind อยู่ที่ `127.0.0.1` เท่านั้น
 
-รายละเอียดการติดตั้งอยู่ที่
-[`deploy/ec2/README.md`](deploy/ec2/README.md) และ
-[`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)
-
-## ECS Fargate
-
-ใช้เมื่อจำเป็นต้องทำ High Availability, autoscaling หรือแยกการ deploy
-แต่ละ service รายละเอียดอยู่ที่ [`infra/ecs/README.md`](infra/ecs/README.md)
+รายละเอียดการติดตั้งอยู่ที่ [`deploy/ec2/README.md`](deploy/ec2/README.md)
+และภาพรวมระบบอยู่ที่ [`docs/architecture.md`](docs/architecture.md)

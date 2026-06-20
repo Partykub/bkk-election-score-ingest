@@ -3,6 +3,8 @@
 **Version:** 1.0.0
 **Base URL:** `/api/v1`
 
+ตัวอย่าง JSON เต็มอยู่ใน [`docs/api-examples/`](docs/api-examples/README.md)
+
 ---
 
 ## 1. Get Overall Election Summary

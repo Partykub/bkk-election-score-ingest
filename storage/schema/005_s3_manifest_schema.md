@@ -231,7 +231,7 @@ messages/{source_message_id}/ocr_job.json
     "language_hint": "th",
     "expected_document_type": "election_score_sheet",
     "prompt_version": "ocr-v1",
-    "model_name": "gemma-vision"
+    "model_name": "gemma4:26b"
   },
   "result": null,
   "error": null,
@@ -316,7 +316,7 @@ messages/{source_message_id}/draft_latest.json
   "raw_model_output": {
     "text": "...raw Hermes response..."
   },
-  "model_name": "gemma-vision",
+  "model_name": "gemma4:26b",
   "prompt_version": "ocr-v1",
   "created_by": "ocr-worker",
   "created_at": "2026-06-09T06:31:10Z",

@@ -25,7 +25,8 @@ Container นี้มีแค่ตัวเดียว แต่เปิด
 ```
 Model Provider (OpenAI API / OpenRouter / Ollama)
     ↑
-    │  OPENAI_API_BASE + OPENAI_API_KEY / OPENROUTER_API_KEY
+    │  OLLAMA_API_BASE หรือ OPENAI_API_BASE
+    │  + OPENAI_API_KEY / OPENROUTER_API_KEY / MODEL_API_KEY
     │
 hermes-supervisor
     ├── :8642  ← ocr-worker เรียก vision request (model: gemma4:26b)
@@ -36,6 +37,7 @@ Model provider ที่รองรับ (config ผ่าน `.env`):
 - **OpenRouter** — `OPENAI_API_BASE=https://openrouter.ai/api/v1`
 - **OpenAI** — `OPENAI_API_BASE=https://api.openai.com/v1`
 - **Ollama (local)** — `OPENAI_API_BASE=http://host.docker.internal:11434/v1`
+- **Ollama (remote via ngrok)** — `OLLAMA_API_BASE=https://your-name.ngrok-free.dev/v1`
 
 ## AWS Resources (ที่ใช้จริง)
 
@@ -109,5 +111,3 @@ API Consumer
 ## ไม่อยู่ใน scope ปัจจุบัน
 
 - `update-worker` + `SQS update-jobs` — phase 5, ยังไม่ deploy
-- `n8n` — ไม่อยู่ใน critical path
-- `paddle_ocr/` — sandbox เท่านั้น

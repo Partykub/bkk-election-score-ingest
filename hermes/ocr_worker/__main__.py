@@ -121,7 +121,7 @@ def build_config() -> WorkerConfig:
         aws_region=aws_region,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
-        model_name=os.environ.get("OCR_WORKER_MODEL_NAME", "gemma-vision").strip(),
+        model_name=os.environ.get("OCR_WORKER_MODEL_NAME", "gemma4:26b").strip(),
         poll_seconds=max(1, poll_seconds),
         queue_max_messages=max(1, min(10, queue_max_messages)),
         processing_concurrency=max(1, min(10, processing_concurrency)),
@@ -991,6 +991,7 @@ def build_draft_documents(
     ocr_job_manifest: dict[str, Any],
     normalized_payload: dict[str, Any],
     raw_model_text: str,
+    model_name: str,
     revision: int,
     timestamp: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -1053,7 +1054,7 @@ def build_draft_documents(
         "normalization_warnings": normalization_warnings,
         "notes": normalized_payload.get("notes") or normalized_payload.get("summary_text"),
         "raw_model_output": {"text": raw_model_text},
-        "model_name": str((ocr_job_manifest.get("ocr_options") or {}).get("model_name") or "gemma-vision"),
+        "model_name": model_name,
         "prompt_version": prompt_version,
         "created_by": "ocr-worker",
         "created_at": timestamp,
@@ -1353,6 +1354,7 @@ def process_downloaded_job(*, downloaded_job: DownloadedJob, s3_client: Any, con
             ocr_job_manifest=ocr_job_manifest,
             normalized_payload=normalized_payload,
             raw_model_text=raw_model_text,
+            model_name=config.model_name,
             revision=revision,
             timestamp=timestamp,
         )
