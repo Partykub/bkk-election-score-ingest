@@ -397,6 +397,45 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertIn("ตอบ 'ยืนยัน'", prompt)
         self.assertIn("ตอบ 'ไม่ถูกต้อง'", prompt)
 
+    def test_build_draft_documents_infers_ballot_summary_report_type(self):
+        downloaded_job = DownloadedJob(
+            ocr_job_id="ocr_src_123",
+            source_message_id="src_123",
+            workflow_session_id="line_group_C123",
+            manifest_bucket="bucket",
+            manifest_key="messages/src_123/ocr_job.json",
+            input_bucket="bucket",
+            input_key="image.jpg",
+            input_size_bytes=1,
+            input_content_type="image/jpeg",
+            queue_message_id=None,
+            receipt_handle=None,
+        )
+        draft_manifest, _, _ = build_draft_documents(
+            downloaded_job=downloaded_job,
+            ocr_job_manifest={"ocr_options": {"prompt_version": "ocr-v1"}},
+            normalized_payload={
+                "document_type": "election_score_sheet",
+                "area_id": "13",
+                "eligible_voters": 100,
+                "voter_turnout": 80,
+                "valid_ballots": 70,
+                "invalid_ballots": 5,
+                "vote_no": 5,
+                "candidate_scores": [],
+                "overall_confidence": 0.9,
+                "validation_flags": [],
+                "image_quality_flags": [],
+            },
+            raw_model_text="{}",
+            model_name="test-model",
+            revision=1,
+            timestamp="2026-06-22T00:00:00Z",
+        )
+
+        self.assertEqual(draft_manifest["report_type"], "ballot_summary")
+        self.assertNotIn("missing_candidate_scores", draft_manifest["validation_flags"])
+
     def test_build_approval_prompt_text_includes_ballot_summary(self):
         prompt = build_approval_prompt_text(
             {
@@ -445,6 +484,42 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertIn("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก", prompt)
         self.assertIn("แก้ไข เขต 13", prompt)
         self.assertNotIn("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้", prompt)
+
+    def helper_build_approval_prompt_text_allows_ballot_summary_without_candidate_scores(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "ballot_summary",
+                "area_id": "13",
+                "eligible_voters": 100,
+                "voter_turnout": 80,
+                "valid_ballots": 70,
+                "invalid_ballots": 5,
+                "vote_no": 5,
+                "candidate_scores": [],
+            }
+        )
+
+        self.assertIn("เธ•เธญเธ 'เธขเธทเธเธขเธฑเธ'", prompt)
+        self.assertNotIn("\u0e04\u0e30\u0e41\u0e19\u0e19\u0e1c\u0e39\u0e49\u0e2a\u0e21\u0e31\u0e04\u0e23", prompt)
+
+    def test_build_approval_prompt_text_allows_ballot_summary_without_candidate_scores(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "ballot_summary",
+                "area_id": "13",
+                "eligible_voters": 100,
+                "voter_turnout": 80,
+                "valid_ballots": 70,
+                "invalid_ballots": 5,
+                "vote_no": 5,
+                "candidate_scores": [],
+            }
+        )
+
+        self.assertIn("\u0e15\u0e2d\u0e1a '\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19'", prompt)
+        self.assertNotIn("\u0e04\u0e30\u0e41\u0e19\u0e19\u0e1c\u0e39\u0e49\u0e2a\u0e21\u0e31\u0e04\u0e23", prompt)
 
     def test_send_line_push_message_posts_expected_payload(self):
         opener = _RecordingUrlOpen()

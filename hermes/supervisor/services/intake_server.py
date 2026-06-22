@@ -608,8 +608,82 @@ def draft_has_approvable_candidate_scores(draft_manifest: dict[str, Any]) -> boo
     )
 
 
+def normalize_optional_int_value(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(str(value).replace(",", "").strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def draft_has_complete_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
+    required_values = (
+        normalize_optional_int_value(draft_manifest.get("eligible_voters")),
+        normalize_optional_int_value(draft_manifest.get("voter_turnout")),
+        normalize_optional_int_value(draft_manifest.get("valid_ballots")),
+        normalize_optional_int_value(draft_manifest.get("invalid_ballots")),
+        normalize_optional_int_value(
+            draft_manifest.get("vote_no")
+            if draft_manifest.get("vote_no") is not None
+            else draft_manifest.get("abstained_ballots")
+        ),
+    )
+    return all(value is not None for value in required_values)
+
+
+def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
+    raw_report_type = str(draft_manifest.get("report_type") or "").strip().lower()
+    has_scores = draft_has_approvable_candidate_scores(draft_manifest)
+    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+
+    if raw_report_type in {"ballot_summary", "turnout_summary", "ballot_accounting_summary"}:
+        return "ballot_summary"
+    if raw_report_type in {"combined_results_sheet", "combined_score_sheet"}:
+        return "combined_results_sheet"
+    if raw_report_type in {"election_score_sheet", "score_sheet", "candidate_results", "candidate_results_report"}:
+        if has_scores and has_ballot_summary:
+            return "combined_results_sheet"
+        if has_scores:
+            return "election_score_sheet"
+        if has_ballot_summary:
+            return "ballot_summary"
+        return "election_score_sheet"
+
+    if has_scores and has_ballot_summary:
+        return "combined_results_sheet"
+    if has_scores:
+        return "election_score_sheet"
+    if has_ballot_summary:
+        return "ballot_summary"
+    return raw_report_type or "other"
+
+
+def missing_approval_requirements_code(draft_manifest: dict[str, Any]) -> str | None:
+    report_type = inferred_report_type(draft_manifest)
+    has_scores = draft_has_approvable_candidate_scores(draft_manifest)
+    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+
+    if report_type == "ballot_summary" and not has_ballot_summary:
+        return "BALLOT_SUMMARY_REQUIRED"
+    if report_type == "combined_results_sheet":
+        if not has_scores:
+            return "CANDIDATE_SCORES_REQUIRED"
+        if not has_ballot_summary:
+            return "BALLOT_SUMMARY_REQUIRED"
+    if report_type == "election_score_sheet" and not has_scores:
+        return "CANDIDATE_SCORES_REQUIRED"
+    if report_type == "other" and not (has_scores or has_ballot_summary):
+        return "REPORT_DATA_REQUIRED"
+    return None
+
+
+def build_missing_ballot_summary_guidance_text() -> str:
+    return 'เธฃเนเธฒเธเธเธตเนเธขเธฑเธเนเธกเนเธเธฃเธเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃ เธเธถเธเธขเธฑเธเธเธฑเธเธ—เธถเธเธเธฅเน€เธเนเธฒเธฃเธฐเธเธเนเธกเนเนเธ”เน\nเธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เนเธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธขเธทเธเธขเธฑเธ'
+
+
 def draft_can_be_approved(draft_manifest: dict[str, Any]) -> bool:
-    return bool(str(draft_manifest.get("area_id") or "").strip()) and draft_has_approvable_candidate_scores(draft_manifest)
+    return bool(str(draft_manifest.get("area_id") or "").strip()) and missing_approval_requirements_code(draft_manifest) is None
 
 
 def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
@@ -644,10 +718,14 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
         lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
 
-    if not draft_has_approvable_candidate_scores(draft_manifest):
+    approval_requirements_code = missing_approval_requirements_code(draft_manifest)
+    if approval_requirements_code == "CANDIDATE_SCORES_REQUIRED":
         lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะมีคะแนนผู้สมัคร")
         lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
 
+    if approval_requirements_code == "BALLOT_SUMMARY_REQUIRED":
+        lines.append("เธขเธฑเธเธขเธทเธเธขเธฑเธเธฃเนเธฒเธเธเธตเนเนเธกเนเนเธ”เนเธเธเธเธงเนเธฒเธเธฐเธกเธตเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃเธเธฃเธ")
+        lines.append("เธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธเธฑเธเธ—เธถเธ")
     if draft_can_be_approved(draft_manifest):
         lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
@@ -1489,6 +1567,9 @@ class LocalStateStore:
             if (manifest.get("exception") or {}).get("code") == "CANDIDATE_SCORES_REQUIRED":
                 self._reply_text(manifest, build_missing_candidate_scores_guidance_text())
                 return
+            if (manifest.get("exception") or {}).get("code") == "BALLOT_SUMMARY_REQUIRED":
+                self._reply_text(manifest, build_missing_ballot_summary_guidance_text())
+                return
             self._reply_text(manifest, build_correction_guidance_text())
             return
 
@@ -1746,14 +1827,15 @@ class LocalStateStore:
                     "message": "draft is missing area_id and cannot be approved yet",
                 }
                 return manifest["state"], target_source_message_id
-            if not draft_has_approvable_candidate_scores(draft_manifest):
+            approval_requirements_code = missing_approval_requirements_code(draft_manifest)
+            if approval_requirements_code is not None:
                 target_source_manifest["pending_user_action"] = "awaiting_correction_input"
                 target_source_manifest["updated_at"] = timestamp
                 self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
                 manifest["state"] = "exception"
                 manifest["exception"] = {
-                    "code": "CANDIDATE_SCORES_REQUIRED",
-                    "message": "draft is missing candidate scores and cannot be approved yet",
+                    "code": approval_requirements_code,
+                    "message": "draft is missing required report data and cannot be approved yet",
                 }
                 return manifest["state"], target_source_message_id
 

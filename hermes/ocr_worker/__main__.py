@@ -484,8 +484,65 @@ def draft_has_approvable_candidate_scores(draft_manifest: dict[str, Any]) -> boo
     )
 
 
+def draft_has_complete_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
+    required_values = (
+        normalize_optional_int(draft_manifest, "eligible_voters"),
+        normalize_optional_int(draft_manifest, "voter_turnout"),
+        normalize_optional_int(draft_manifest, "valid_ballots"),
+        normalize_optional_int(draft_manifest, "invalid_ballots"),
+        normalize_optional_int(draft_manifest, "vote_no", "abstained_ballots"),
+    )
+    return all(value is not None for value in required_values)
+
+
+def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
+    raw_report_type = str(draft_manifest.get("report_type") or "").strip().lower()
+    has_scores = draft_has_approvable_candidate_scores(draft_manifest)
+    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+
+    if raw_report_type in {"ballot_summary", "turnout_summary", "ballot_accounting_summary"}:
+        return "ballot_summary"
+    if raw_report_type in {"combined_results_sheet", "combined_score_sheet"}:
+        return "combined_results_sheet"
+    if raw_report_type in {"election_score_sheet", "score_sheet", "candidate_results", "candidate_results_report"}:
+        if has_scores and has_ballot_summary:
+            return "combined_results_sheet"
+        if has_scores:
+            return "election_score_sheet"
+        if has_ballot_summary:
+            return "ballot_summary"
+        return "election_score_sheet"
+
+    if has_scores and has_ballot_summary:
+        return "combined_results_sheet"
+    if has_scores:
+        return "election_score_sheet"
+    if has_ballot_summary:
+        return "ballot_summary"
+    return raw_report_type or "other"
+
+
+def missing_approval_requirements_code(draft_manifest: dict[str, Any]) -> str | None:
+    report_type = inferred_report_type(draft_manifest)
+    has_scores = draft_has_approvable_candidate_scores(draft_manifest)
+    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+
+    if report_type == "ballot_summary" and not has_ballot_summary:
+        return "BALLOT_SUMMARY_REQUIRED"
+    if report_type == "combined_results_sheet":
+        if not has_scores:
+            return "CANDIDATE_SCORES_REQUIRED"
+        if not has_ballot_summary:
+            return "BALLOT_SUMMARY_REQUIRED"
+    if report_type == "election_score_sheet" and not has_scores:
+        return "CANDIDATE_SCORES_REQUIRED"
+    if report_type == "other" and not (has_scores or has_ballot_summary):
+        return "REPORT_DATA_REQUIRED"
+    return None
+
+
 def draft_can_be_approved(draft_manifest: dict[str, Any]) -> bool:
-    return bool(str(draft_manifest.get("area_id") or "").strip()) and draft_has_approvable_candidate_scores(draft_manifest)
+    return bool(str(draft_manifest.get("area_id") or "").strip()) and missing_approval_requirements_code(draft_manifest) is None
 
 
 def ensure_string_list(values: Any) -> list[str]:
@@ -602,10 +659,14 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
         lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
 
-    if not draft_has_approvable_candidate_scores(draft_manifest):
+    approval_requirements_code = missing_approval_requirements_code(draft_manifest)
+    if approval_requirements_code == "CANDIDATE_SCORES_REQUIRED":
         lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะมีคะแนนผู้สมัคร")
         lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
 
+    if approval_requirements_code == "BALLOT_SUMMARY_REQUIRED":
+        lines.append("เธขเธฑเธเธขเธทเธเธขเธฑเธเธฃเนเธฒเธเธเธตเนเนเธกเนเนเธ”เนเธเธเธเธงเนเธฒเธเธฐเธกเธตเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃเธเธฃเธ")
+        lines.append("เธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธเธฑเธเธ—เธถเธ")
     if draft_can_be_approved(draft_manifest):
         lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
@@ -901,7 +962,7 @@ def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_v
         "}\n\n"
         "ตอนนี้ตาคุณแล้ว คืนค่าเฉพาะข้อมูล JSON ของรูปภาพนี้ ห้ามมี Markdown หรือคำอธิบายเพิ่มเติม:\n"
         "{\n"
-        '  "document_type": "election_score_sheet" | "other",\n'
+        '  "document_type": "election_score_sheet" | "ballot_summary" | "combined_results_sheet" | "other",\n'
         '  "summary_text": string,\n'
         '  "election_id": string | null,\n'
         '  "area_id": string | null,\n'
@@ -1004,8 +1065,6 @@ def build_draft_documents(
     image_quality_flags = ensure_string_list(normalized_payload.get("image_quality_flags"))
     normalization_warnings = detect_candidate_score_normalization_warnings(raw_candidate_scores, candidate_scores)
 
-    if not candidate_scores:
-        validation_flags = sorted(set(validation_flags + ["missing_candidate_scores", "requires_human_review"]))
     if normalization_warnings:
         validation_flags = sorted(set(validation_flags + normalization_warnings))
 
@@ -1024,6 +1083,29 @@ def build_draft_documents(
     valid_ballots = normalize_optional_int(normalized_payload, "valid_ballots", "validBallots")
     invalid_ballots = normalize_optional_int(normalized_payload, "invalid_ballots", "invalidBallots")
     vote_no = normalize_optional_int(normalized_payload, "vote_no", "abstained_ballots", "abstainedBallots", "voteNo")
+    inferred_type = inferred_report_type(
+        {
+            "report_type": normalized_payload.get("document_type") or "score_sheet",
+            "candidate_scores": candidate_scores,
+            "eligible_voters": eligible_voters,
+            "voter_turnout": voter_turnout,
+            "valid_ballots": valid_ballots,
+            "invalid_ballots": invalid_ballots,
+            "vote_no": vote_no,
+        }
+    )
+    if inferred_type in {"election_score_sheet", "combined_results_sheet"} and not candidate_scores:
+        validation_flags = sorted(set(validation_flags + ["missing_candidate_scores", "requires_human_review"]))
+    if inferred_type in {"ballot_summary", "combined_results_sheet"} and not draft_has_complete_ballot_summary(
+        {
+            "eligible_voters": eligible_voters,
+            "voter_turnout": voter_turnout,
+            "valid_ballots": valid_ballots,
+            "invalid_ballots": invalid_ballots,
+            "vote_no": vote_no,
+        }
+    ):
+        validation_flags = sorted(set(validation_flags + ["missing_ballot_summary", "requires_human_review"]))
     result_signature = build_result_signature(candidate_scores, str(area_id).strip() if area_id else None)
     prompt_version = str((ocr_job_manifest.get("ocr_options") or {}).get("prompt_version") or "ocr-v1")
 
@@ -1044,7 +1126,7 @@ def build_draft_documents(
         "valid_ballots": valid_ballots,
         "invalid_ballots": invalid_ballots,
         "vote_no": vote_no,
-        "report_type": normalized_payload.get("document_type") or "score_sheet",
+        "report_type": inferred_type,
         "observed_at": normalized_payload.get("observed_at"),
         "result_signature": result_signature,
         "overall_confidence": overall_confidence,

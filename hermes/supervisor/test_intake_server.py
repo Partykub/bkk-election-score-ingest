@@ -413,6 +413,150 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertIn("ยังไม่พบคะแนนผู้สมัคร", reply_sender.messages[0]["text"])
         self.assertIn("แก้ไข 4=14", reply_sender.messages[0]["text"])
 
+    def helper_approval_command_allows_ballot_summary_without_candidate_scores(self) -> None:
+        s3_client = _RecordingS3Client()
+        queue_client = _RecordingQueueClient()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=queue_client,
+        )
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            update_job_queue=update_job_queue,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE777C",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE777C_r1",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777C/draft_r1.json",
+            "current_approval_id": "approval_src_01JXIMAGE777C_r1",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777C/approval_r1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE777C_r1",
+            "draft_id": "draft_src_01JXIMAGE777C_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE777C_r1",
+            "election_id": "election-2026",
+            "area_id": "13",
+            "polling_unit_id": "07",
+            "report_type": "ballot_summary",
+            "eligible_voters": 100,
+            "voter_turnout": 80,
+            "valid_ballots": 70,
+            "invalid_ballots": 5,
+            "vote_no": 5,
+            "candidate_scores": [],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE777C",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXAPPROVE777C",
+                "replyToken": "reply-token-approve-c",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000777C", "type": "text", "text": "เธขเธทเธเธขเธฑเธ"},
+            },
+            received_at="2026-06-08T07:45:00Z",
+        )
+
+        self.assertEqual(result.state, "approved")
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777C/approval_r1.json")].decode("utf-8"))
+        self.assertEqual(updated_approval["state"], "approved")
+        self.assertEqual(len(queue_client.messages), 1)
+
+    def test_approval_command_allows_ballot_summary_without_candidate_scores(self) -> None:
+        s3_client = _RecordingS3Client()
+        queue_client = _RecordingQueueClient()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=queue_client,
+        )
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            update_job_queue=update_job_queue,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE777C",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE777C_r1",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777C/draft_r1.json",
+            "current_approval_id": "approval_src_01JXIMAGE777C_r1",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777C/approval_r1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE777C_r1",
+            "draft_id": "draft_src_01JXIMAGE777C_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE777C_r1",
+            "election_id": "election-2026",
+            "area_id": "13",
+            "polling_unit_id": "07",
+            "report_type": "ballot_summary",
+            "eligible_voters": 100,
+            "voter_turnout": 80,
+            "valid_ballots": 70,
+            "invalid_ballots": 5,
+            "vote_no": 5,
+            "candidate_scores": [],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE777C",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777C/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXAPPROVE777C",
+                "replyToken": "reply-token-approve-c",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000777C", "type": "text", "text": "\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19"},
+            },
+            received_at="2026-06-08T07:45:00Z",
+        )
+
+        self.assertEqual(result.state, "approved")
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777C/approval_r1.json")].decode("utf-8"))
+        self.assertEqual(updated_approval["state"], "approved")
+        self.assertEqual(len(queue_client.messages), 1)
+
     def test_correction_command_creates_corrected_draft_and_new_approval(self) -> None:
         s3_client = _RecordingS3Client()
         push_sender = _RecordingPushSender()
