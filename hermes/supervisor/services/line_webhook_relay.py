@@ -13,6 +13,8 @@ from typing import Any
 from urllib import error, parse, request
 from urllib.parse import parse_qs, urlsplit
 
+import boto3
+
 from hermes.supervisor.intake_server import (
     LocalStateStore,
     build_correction_form_token,
@@ -59,6 +61,44 @@ def process_line_payload(store: LocalStateStore, raw_payload: bytes) -> dict[str
             }
             for item in processed
         ],
+    }
+
+
+def read_json_url(url: str, *, api_key: str | None = None) -> dict[str, Any]:
+    headers = {"Accept": "application/json", "User-Agent": "election-line-relay/1.0"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    upstream_request = request.Request(url, headers=headers)
+    with request.urlopen(upstream_request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def export_static_governor_results() -> dict[str, Any] | None:
+    bucket = os.environ.get("STATIC_RESULTS_S3_BUCKET", "").strip() or os.environ.get("SUPERVISOR_S3_BUCKET", "").strip()
+    if not bucket:
+        return None
+    api_base_url = os.environ.get("RESULTS_API_INTERNAL_BASE_URL", "http://results-api:8080").strip().rstrip("/")
+    static_prefix = os.environ.get("STATIC_RESULTS_PREFIX", "api-data/governor-results").strip().strip("/")
+    region = os.environ.get("STATIC_RESULTS_S3_REGION", "").strip() or os.environ.get("SUPERVISOR_S3_REGION", "").strip() or None
+    api_key = os.environ.get("RESULTS_API_KEY", "").strip() or None
+    summary = read_json_url(f"{api_base_url}/api/v1/governor-results/summary", api_key=api_key)
+    districts = read_json_url(f"{api_base_url}/api/v1/governor-results/districts", api_key=api_key)
+    s3_client = boto3.client("s3", region_name=region)
+    keys = {
+        "summaryKey": f"{static_prefix}/sumary.json" if static_prefix else "sumary.json",
+        "districtsKey": f"{static_prefix}/districts.json" if static_prefix else "districts.json",
+    }
+    for key_name, payload in (("summaryKey", summary), ("districtsKey", districts)):
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=keys[key_name],
+            Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            ContentType="application/json; charset=utf-8",
+        )
+    return {
+        "status": "static_results_exported",
+        "keys": [keys["summaryKey"], keys["districtsKey"]],
+        "dataMode": summary.get("dataInterpretation", {}).get("mode"),
     }
 
 
@@ -444,6 +484,14 @@ def make_handler(
                     {"error": {"code": "PERSIST_FAILED", "message": str(exc)}},
                 )
                 return
+
+            try:
+                static_export = export_static_governor_results()
+                if static_export:
+                    response_payload["staticExport"] = static_export
+                    print(json.dumps({"service": "line-relay", **static_export}, ensure_ascii=False))
+            except Exception as exc:
+                print(f"line relay: unable to export static results: {exc}", file=sys.stderr)
 
             self._send_json(HTTPStatus.OK, response_payload)
 

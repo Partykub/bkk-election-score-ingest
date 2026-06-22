@@ -35,6 +35,7 @@ class Settings:
     election_title: str
     result_status: str
     delayed_after_minutes: int
+    static_results_prefix: str
 
 
 def load_settings() -> Settings:
@@ -96,6 +97,10 @@ def load_settings() -> Settings:
             1,
             int(os.environ.get("RESULTS_API_DELAYED_AFTER_MINUTES", "30")),
         ),
+        static_results_prefix=os.environ.get(
+            "RESULTS_API_STATIC_RESULTS_PREFIX",
+            "api-data/governor-results",
+        ).strip().strip("/"),
     )
 
 
@@ -176,6 +181,14 @@ class ResultsStore:
         self.s3_client.put_object(
             Bucket=self.bucket,
             Key=self.key(relative_key),
+            Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            ContentType="application/json; charset=utf-8",
+        )
+
+    def write_absolute_json(self, key: str, payload: dict[str, Any]) -> None:
+        self.s3_client.put_object(
+            Bucket=self.bucket,
+            Key=key.strip().lstrip("/"),
             Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
             ContentType="application/json; charset=utf-8",
         )
@@ -2628,12 +2641,17 @@ def update_monitor_data_mode(payload: dict[str, Any] = Body(...)) -> dict[str, A
     except BotoCoreError as exc:
         raise monitor_storage_error(exc) from exc
     invalidate_result_caches()
+    try:
+        static_export = export_static_governor_results()
+    except (BotoCoreError, ClientError) as exc:
+        raise monitor_storage_error(exc) from exc
     return {
         "schemaVersion": "1.0",
         "resource": "election-monitor-data-mode-override",
         "electionId": settings.election_id,
         "dataMode": after,
         "auditEvent": audit_event,
+        "staticExport": static_export,
     }
 
 
@@ -2934,13 +2952,7 @@ def _build_governor_results_response() -> dict[str, Any]:
     return payload
 
 
-@app.get("/api/v1/governor-results/summary", dependencies=[Depends(require_api_key)])
-def get_governor_results_summary() -> dict[str, Any]:
-    return governor_results_response()
-
-
-@app.get("/api/v1/governor-results/districts", dependencies=[Depends(require_api_key)])
-def get_governor_district_results() -> dict[str, Any]:
+def _build_governor_district_results_response() -> dict[str, Any]:
     try:
         candidates_by_number = candidate_catalog.candidates_by_number()
     except Exception:
@@ -2949,15 +2961,40 @@ def get_governor_district_results() -> dict[str, Any]:
         districts_by_id = district_catalog.districts_by_id()
     except Exception:
         districts_by_id = {}
-    
+
     mode = current_data_mode()
     approved_results = interpreted_public_results(mode)
-    
+
     return build_district_results(
         approved_results=approved_results,
         candidate_catalog=candidates_by_number,
         district_catalog=districts_by_id,
     )
+
+
+def export_static_governor_results() -> dict[str, Any]:
+    summary_payload = governor_results_response(use_cache=False)
+    districts_payload = _build_governor_district_results_response()
+    prefix = settings.static_results_prefix
+    summary_key = f"{prefix}/sumary.json" if prefix else "sumary.json"
+    districts_key = f"{prefix}/districts.json" if prefix else "districts.json"
+    store.write_absolute_json(summary_key, summary_payload)
+    store.write_absolute_json(districts_key, districts_payload)
+    return {
+        "summaryKey": summary_key,
+        "districtsKey": districts_key,
+        "dataMode": summary_payload.get("dataInterpretation", {}).get("mode"),
+    }
+
+
+@app.get("/api/v1/governor-results/summary", dependencies=[Depends(require_api_key)])
+def get_governor_results_summary() -> dict[str, Any]:
+    return governor_results_response()
+
+
+@app.get("/api/v1/governor-results/districts", dependencies=[Depends(require_api_key)])
+def get_governor_district_results() -> dict[str, Any]:
+    return _build_governor_district_results_response()
 
 
 @app.get("/api/v1/master/districts", dependencies=[Depends(require_api_key)])
