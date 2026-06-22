@@ -78,11 +78,15 @@ def export_static_governor_results() -> dict[str, Any] | None:
     if not bucket:
         return None
     api_base_url = os.environ.get("RESULTS_API_INTERNAL_BASE_URL", "http://results-api:8080").strip().rstrip("/")
-    static_prefix = os.environ.get("STATIC_RESULTS_PREFIX", "api-data/governor-results").strip().strip("/")
+    static_prefix = (
+        os.environ.get("STATIC_RESULTS_PREFIX", "").strip()
+        or os.environ.get("GOVERNOR_RESULTS_PREFIX", "").strip()
+        or "api-data/governor-results"
+    ).strip().strip("/")
     region = os.environ.get("STATIC_RESULTS_S3_REGION", "").strip() or os.environ.get("SUPERVISOR_S3_REGION", "").strip() or None
     api_key = os.environ.get("RESULTS_API_KEY", "").strip() or None
-    summary = read_json_url(f"{api_base_url}/api/v1/governor-results/summary", api_key=api_key)
-    districts = read_json_url(f"{api_base_url}/api/v1/governor-results/districts", api_key=api_key)
+    summary = read_json_url(f"{api_base_url}/api/v1/governor-results/summary?fresh=1", api_key=api_key)
+    districts = read_json_url(f"{api_base_url}/api/v1/governor-results/districts?fresh=1", api_key=api_key)
     s3_client = boto3.client("s3", region_name=region)
     keys = {
         "summaryKey": f"{static_prefix}/sumary.json" if static_prefix else "sumary.json",

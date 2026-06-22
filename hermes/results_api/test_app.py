@@ -116,6 +116,94 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["approved_at"], "2026-06-15T01:01:00Z")
 
+    def test_reads_absolute_json_without_prefix(self):
+        self.client.objects[("bucket", "api-data/governor-results/sumary.json")] = _encoded({"ok": True})
+
+        payload = self.store.read_absolute_json("api-data/governor-results/sumary.json")
+
+        self.assertEqual(payload, {"ok": True})
+
+    def test_reads_maybe_absolute_json_with_existing_prefix(self):
+        self.client.objects[("bucket", "api-data/score/messages/src_1/draft_r1.json")] = _encoded({"ok": True})
+        prefixed_store = ResultsStore(s3_client=self.client, bucket="bucket", prefix="api-data/score")
+
+        payload = prefixed_store.read_maybe_absolute_json("api-data/score/messages/src_1/draft_r1.json")
+
+        self.assertEqual(payload, {"ok": True})
+
+    def test_approved_result_reads_absolute_manifest_keys(self):
+        source_id = "src_abs"
+        self.client.objects[("bucket", "api-data/score/indexes/by-area/default/7/submissions.json")] = _encoded(
+            {
+                "submission_count": 1,
+                "submissions": [{"source_message_id": source_id}],
+            }
+        )
+        self.client.objects[("bucket", f"api-data/score/messages/{source_id}/manifest.json")] = _encoded(
+            {
+                "state": "approved",
+                "current_approval_key": f"api-data/score/messages/{source_id}/approval_r1.json",
+                "current_draft_key": f"api-data/score/messages/{source_id}/draft_r1.json",
+                "created_at": "2026-06-22T10:23:37Z",
+            }
+        )
+        self.client.objects[("bucket", f"api-data/score/messages/{source_id}/approval_r1.json")] = _encoded(
+            {"state": "approved", "responded_at": "2026-06-22T10:24:01Z"}
+        )
+        self.client.objects[("bucket", f"api-data/score/messages/{source_id}/draft_r1.json")] = _encoded(
+            {
+                "area_id": "7",
+                "candidate_scores": [{"candidate_number": 1, "score": 100}],
+            }
+        )
+        prefixed_store = ResultsStore(s3_client=self.client, bucket="bucket", prefix="api-data/score")
+
+        result = prefixed_store.approved_result(source_id)
+
+        self.assertEqual(result["area_id"], "7")
+        self.assertEqual(result["candidate_scores"][0]["score"], 100)
+
+
+class DistrictCatalogTests(unittest.TestCase):
+    def test_normalizes_top_level_election_areas_payload(self):
+        catalog = results_app.DistrictCatalog(url="https://example.test/districts.json")
+        catalog._read_json_url = lambda: {
+            "schemaVersion": "1.0",
+            "resource": "election-areas-bangkok",
+            "electionAreas": [
+                {
+                    "id": "26b4aad6-94b3-490a-9390-71636d5e97a4",
+                    "number": 1,
+                    "name": "พระนคร",
+                }
+            ],
+        }
+
+        districts = catalog.districts()
+
+        self.assertEqual(len(districts), 1)
+        self.assertEqual(districts[0]["id"], 1)
+        self.assertEqual(districts[0]["districtNameTh"], "พระนคร")
+        self.assertEqual(districts[0]["electionAreaId"], "26b4aad6-94b3-490a-9390-71636d5e97a4")
+
+    def test_districts_by_id_maps_number_and_uuid(self):
+        catalog = results_app.DistrictCatalog(url="https://example.test/districts.json")
+        catalog.districts = lambda: [
+            {
+                "id": 1,
+                "provinceCode": 10,
+                "districtCode": 1,
+                "districtNameTh": "พระนคร",
+                "electionAreaId": "26b4aad6-94b3-490a-9390-71636d5e97a4",
+                "areaNumber": 1,
+            }
+        ]
+
+        mapped = catalog.districts_by_id()
+
+        self.assertEqual(mapped["1"]["districtNameTh"], "พระนคร")
+        self.assertEqual(mapped["26b4aad6-94b3-490a-9390-71636d5e97a4"]["districtNameTh"], "พระนคร")
+
     def test_governor_results_sum_latest_approved_result_per_area(self):
         payload = build_governor_results(
             approved_results=[
@@ -201,6 +289,40 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertFalse(payload["dataQuality"]["isDelayed"])
         self.assertTrue(payload["dataQuality"]["warnings"])
 
+    def test_district_results_deduplicates_catalog_aliases(self):
+        payload = build_district_results(
+            approved_results=[
+                {
+                    "area_id": "1",
+                    "candidate_scores": [{"candidate_number": 1, "score": 100}],
+                }
+            ],
+            candidate_catalog={1: {"candidateId": "one", "name": "One", "color": "#111111"}},
+            district_catalog={
+                "1": {
+                    "id": 1,
+                    "provinceCode": 10,
+                    "districtCode": 1,
+                    "districtNameTh": "พระนคร",
+                    "areaNumber": 1,
+                    "electionAreaId": "uuid-1",
+                },
+                "uuid-1": {
+                    "id": 1,
+                    "provinceCode": 10,
+                    "districtCode": 1,
+                    "districtNameTh": "พระนคร",
+                    "areaNumber": 1,
+                    "electionAreaId": "uuid-1",
+                },
+            },
+        )
+
+        constituencies = payload["data"]["constituencies"]
+        self.assertEqual(len(constituencies), 1)
+        self.assertEqual(constituencies[0]["areaId"], "1")
+        self.assertEqual(constituencies[0]["name"], "พระนคร")
+
     def test_governor_results_keeps_candidate_fields_when_catalog_is_unavailable(self):
         payload = build_governor_results(
             approved_results=[
@@ -265,6 +387,35 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertTrue(payload["dataQuality"]["isComplete"])
         self.assertFalse(payload["dataQuality"]["isDelayed"])
 
+    def test_governor_results_partially_aggregates_eligible_voters_and_turnout(self):
+        payload = build_governor_results(
+            approved_results=[
+                {
+                    "approved_at": "2026-06-15T01:02:00Z",
+                    "candidate_scores": [{"candidate_number": 1, "score": 80}],
+                    "eligible_voters": 100,
+                    "voter_turnout": 80,
+                    "valid_ballots": 75,
+                    "invalid_ballots": 3,
+                    "abstained_ballots": 2,
+                },
+                {
+                    "approved_at": "2026-06-15T01:02:30Z",
+                    "candidate_scores": [{"candidate_number": 1, "score": 90}],
+                },
+            ],
+            total_units=2,
+            generated_at="2026-06-15T01:03:00Z",
+        )
+
+        self.assertEqual(payload["summary"]["eligibleVoters"], 100)
+        self.assertEqual(payload["summary"]["voterTurnout"], 80)
+        self.assertEqual(payload["summary"]["voterTurnoutPercentage"], 80.0)
+        self.assertIsNone(payload["summary"]["validBallots"])
+        self.assertIsNone(payload["summary"]["invalidBallots"])
+        self.assertIsNone(payload["summary"]["abstainedBallots"])
+        self.assertIn("validBallots is unavailable or incomplete in approved results.", payload["dataQuality"]["warnings"])
+
     def test_candidate_catalog_joins_manifest_and_featured_by_candidate_number(self):
         catalog = CandidateCatalog(
             manifest_url="https://example.test/manifest.json",
@@ -316,6 +467,100 @@ class ResultsStoreTests(unittest.TestCase):
             },
         )
 
+    def test_candidate_catalog_resolves_party_from_master_by_party_id(self):
+        catalog = CandidateCatalog(
+            manifest_url="https://example.test/manifest.json",
+            featured_url="https://example.test/featured.json",
+            parties_url="https://example.test/parties.json",
+            cache_seconds=300,
+        )
+        payloads = {
+            catalog.manifest_url: {
+                "profiles": [
+                    {
+                        "id": "five",
+                        "candidateNumber": 5,
+                        "name": "Candidate Five",
+                        "partyId": "democrat-party",
+                    },
+                ]
+            },
+            catalog.featured_url: {
+                "candidates": [
+                    {
+                        "id": "five",
+                        "candidateNumber": 5,
+                        "themeColor": "#123456",
+                    },
+                ]
+            },
+            catalog.parties_url: [
+                {
+                    "id": "democrat-party",
+                    "name": "Party Five",
+                    "color": "#010101",
+                    "logoUrl": "https://example.test/party-five.png",
+                },
+            ],
+        }
+        catalog._read_json_url = payloads.__getitem__
+        catalog._read_json_value = payloads.__getitem__
+
+        candidates = catalog.candidates_by_number()
+
+        self.assertEqual(
+            candidates[5]["party"],
+            {
+                "id": "democrat-party",
+                "name": "Party Five",
+                "color": "#010101",
+                "logoUrl": "https://example.test/party-five.png",
+            },
+        )
+
+    def test_candidate_catalog_resolves_party_from_master_by_party_name(self):
+        catalog = CandidateCatalog(
+            manifest_url="https://example.test/manifest.json",
+            featured_url="https://example.test/featured.json",
+            parties_url="https://example.test/parties.json",
+            cache_seconds=300,
+        )
+        payloads = {
+            catalog.manifest_url: {
+                "profiles": [
+                    {
+                        "id": "one",
+                        "candidateNumber": 1,
+                        "name": "Candidate One",
+                        "partyName": "อิสระ",
+                    },
+                ]
+            },
+            catalog.featured_url: {"candidates": [{"id": "one", "candidateNumber": 1}]},
+            catalog.parties_url: [
+                {
+                    "id": "independent",
+                    "name": "อิสระ",
+                    "color": "#6B7280",
+                    "logoUrl": None,
+                },
+            ],
+        }
+        catalog._read_json_url = payloads.__getitem__
+        catalog._read_json_value = payloads.__getitem__
+
+        candidates = catalog.candidates_by_number()
+
+        self.assertEqual(
+            candidates[1]["party"],
+            {
+                "id": "independent",
+                "name": "อิสระ",
+                "color": "#6B7280",
+                "logoUrl": None,
+            },
+        )
+
     def test_district_catalog_maps_area_id_to_district_master(self):
         catalog = DistrictCatalog(url="https://example.test/districts.json")
         catalog._read_json_url = lambda: [
@@ -329,6 +574,28 @@ class ResultsStoreTests(unittest.TestCase):
         ]
 
         self.assertEqual(catalog.districts_by_id()["3"]["districtNameTh"], "หนองจอก")
+
+    def test_district_catalog_supports_election_areas_payload(self):
+        catalog = DistrictCatalog(url="s3://bucket/api-data/master-data/election-areas-bangkok.json")
+        catalog._read_json_url = lambda: {
+            "schemaVersion": "1.0",
+            "resource": "election-areas-bangkok",
+            "data": {
+                "electionAreas": [
+                    {
+                        "id": "uuid-area-1",
+                        "number": 1,
+                        "name": "พระนคร",
+                    }
+                ]
+            },
+        }
+
+        district = catalog.districts_by_id()["1"]
+
+        self.assertEqual(district["districtNameTh"], "พระนคร")
+        self.assertEqual(district["provinceCode"], 10)
+        self.assertEqual(district["electionAreaId"], "uuid-area-1")
 
     def test_build_district_results_uses_district_and_candidate_master_data(self):
         payload = build_district_results(
@@ -1150,6 +1417,107 @@ class MonitorApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("per district", response.json()["detail"])
+
+    def test_governor_results_summary_falls_back_to_static_export_when_live_data_is_empty(self):
+        self.s3_client = _S3Client(
+            {
+                ("bucket", "api-data/governor-results/sumary.json"): _encoded(
+                    {
+                        "schemaVersion": "1.0",
+                        "resource": "governor-results",
+                        "pageMeta": {"title": "Static Summary"},
+                        "summary": {"countedUnits": 30000, "totalUnits": 99954},
+                        "candidates": [],
+                        "dataQuality": {"isComplete": False, "isDelayed": False, "warnings": []},
+                        "dataInterpretation": {"mode": "latest_snapshot", "description": "static"},
+                    }
+                )
+            }
+        )
+        results_app.store = ResultsStore(s3_client=self.s3_client, bucket="bucket")
+        results_app.invalidate_result_caches()
+
+        response = self.client.get("/api/v1/governor-results/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["pageMeta"]["title"], "Static Summary")
+        self.assertEqual(payload["summary"]["countedUnits"], 30000)
+        self.assertEqual(payload["summary"]["totalUnits"], 99954)
+
+    def test_governor_results_districts_falls_back_to_static_export_when_live_data_is_empty(self):
+        self.s3_client = _S3Client(
+            {
+                ("bucket", "api-data/governor-results/districts.json"): _encoded(
+                    {
+                        "schemaVersion": "1.0",
+                        "resource": "governor-district-results",
+                        "data": {"constituencies": [{"areaId": "1", "name": "Static District"}]},
+                    }
+                )
+            }
+        )
+        results_app.store = ResultsStore(s3_client=self.s3_client, bucket="bucket")
+        results_app.invalidate_result_caches()
+
+        response = self.client.get("/api/v1/governor-results/districts")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["data"]["constituencies"][0]["name"], "Static District")
+
+    def test_governor_results_summary_does_not_fall_back_when_disabled(self):
+        original_settings = results_app.settings
+        self.addCleanup(setattr, results_app, "settings", original_settings)
+        results_app.settings = results_app.Settings(
+            **{
+                **original_settings.__dict__,
+                "enable_static_results_fallback": False,
+            }
+        )
+        self.s3_client = _S3Client(
+            {
+                ("bucket", "api-data/governor-results/sumary.json"): _encoded(
+                    {
+                        "schemaVersion": "1.0",
+                        "resource": "governor-results",
+                        "summary": {"countedUnits": 30000},
+                    }
+                )
+            }
+        )
+        results_app.store = ResultsStore(s3_client=self.s3_client, bucket="bucket")
+        results_app.invalidate_result_caches()
+
+        response = self.client.get("/api/v1/governor-results/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["countedUnits"], 0)
+
+    def test_governor_results_summary_fresh_bypasses_cache(self):
+        original_builder = results_app._build_governor_results_response
+        self.addCleanup(setattr, results_app, "_build_governor_results_response", original_builder)
+        call_count = {"count": 0}
+
+        def fake_builder():
+            call_count["count"] += 1
+            return {
+                "schemaVersion": "1.0",
+                "resource": "governor-results",
+                "summary": {"countedUnits": call_count["count"]},
+            }
+
+        results_app._build_governor_results_response = fake_builder
+        results_app.invalidate_result_caches()
+
+        cached_response = self.client.get("/api/v1/governor-results/summary")
+        fresh_response = self.client.get("/api/v1/governor-results/summary?fresh=1")
+
+        self.assertEqual(cached_response.status_code, 200)
+        self.assertEqual(fresh_response.status_code, 200)
+        self.assertEqual(cached_response.json()["summary"]["countedUnits"], 1)
+        self.assertEqual(fresh_response.json()["summary"]["countedUnits"], 2)
 
 
 if __name__ == "__main__":

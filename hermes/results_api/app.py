@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from threading import Lock
 from time import monotonic
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import boto3
@@ -26,6 +27,7 @@ class Settings:
     source_election_id: str
     candidates_manifest_url: str
     candidates_featured_url: str
+    parties_url: str | None
     candidates_timeout_seconds: float
     candidates_cache_seconds: int
     districts_url: str
@@ -35,13 +37,21 @@ class Settings:
     election_title: str
     result_status: str
     delayed_after_minutes: int
+    default_data_mode: str
     static_results_prefix: str
+    enable_static_results_fallback: bool
 
 
 def load_settings() -> Settings:
     bucket = os.environ.get("RESULTS_API_S3_BUCKET", "").strip()
     if not bucket:
         raise RuntimeError("RESULTS_API_S3_BUCKET is required")
+    default_data_mode = os.environ.get(
+        "RESULTS_API_DEFAULT_DATA_MODE",
+        "latest_snapshot",
+    ).strip()
+    if default_data_mode not in {"latest_snapshot", "incremental_delta"}:
+        default_data_mode = "latest_snapshot"
     return Settings(
         bucket=bucket,
         region=os.environ.get("RESULTS_API_AWS_REGION", "ap-southeast-1").strip(),
@@ -61,6 +71,11 @@ def load_settings() -> Settings:
             "RESULTS_API_CANDIDATES_FEATURED_URL",
             "https://w3-dev.ch7.com/api-data/candidates/featured.json",
         ).strip(),
+        parties_url=os.environ.get(
+            "RESULTS_API_PARTIES_URL",
+            "",
+        ).strip()
+        or None,
         candidates_timeout_seconds=max(
             0.1,
             float(os.environ.get("RESULTS_API_CANDIDATES_TIMEOUT_SECONDS", "5")),
@@ -97,10 +112,16 @@ def load_settings() -> Settings:
             1,
             int(os.environ.get("RESULTS_API_DELAYED_AFTER_MINUTES", "30")),
         ),
-        static_results_prefix=os.environ.get(
-            "RESULTS_API_STATIC_RESULTS_PREFIX",
-            "api-data/governor-results",
+        default_data_mode=default_data_mode,
+        static_results_prefix=(
+            os.environ.get("RESULTS_API_STATIC_RESULTS_PREFIX", "").strip()
+            or os.environ.get("GOVERNOR_RESULTS_PREFIX", "").strip()
+            or "api-data/governor-results"
         ).strip().strip("/"),
+        enable_static_results_fallback=os.environ.get(
+            "RESULTS_API_ENABLE_STATIC_FALLBACK",
+            "true",
+        ).strip().lower() not in {"0", "false", "no", "off"},
     )
 
 
@@ -116,6 +137,57 @@ def without_nulls(value: Any) -> Any:
     return value
 
 
+def parse_s3_uri(uri: str) -> tuple[str, str] | None:
+    parsed = urlparse(uri)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        return None
+    return parsed.netloc, parsed.path.lstrip("/")
+
+
+def read_json_source(*, source: str, timeout_seconds: float, s3_client: Any | None = None) -> Any:
+    s3_location = parse_s3_uri(source)
+    if s3_location is not None:
+        bucket, key = s3_location
+        client = s3_client or boto3.client("s3")
+        response = client.get_object(Bucket=bucket, Key=key)
+        return json.loads(response["Body"].read().decode("utf-8"))
+
+    request = Request(source, headers={"Accept": "application/json", "User-Agent": "election-results-api/1.0"})
+    with urlopen(request, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def normalize_election_area_districts(payload: Any) -> list[dict[str, Any]]:
+    election_areas = []
+    if isinstance(payload, dict):
+        election_areas = (
+            payload.get("electionAreas")
+            or ((payload.get("data") or {}).get("electionAreas") if isinstance(payload.get("data"), dict) else [])
+            or []
+        )
+    normalized: list[dict[str, Any]] = []
+    for item in election_areas:
+        if not isinstance(item, dict):
+            continue
+        area_number = item.get("number")
+        if area_number is None:
+            continue
+        normalized.append(
+            without_nulls(
+                {
+                    "id": area_number,
+                    "provinceCode": 10,
+                    "districtCode": area_number,
+                    "districtNameTh": item.get("name"),
+                    "districtNameEn": item.get("nameEn"),
+                    "electionAreaId": item.get("id"),
+                    "areaNumber": area_number,
+                }
+            )
+        )
+    return normalized
+
+
 def normalize_party(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
@@ -125,6 +197,40 @@ def normalize_party(value: Any) -> dict[str, Any] | None:
         "color": value.get("color"),
         "logoUrl": value.get("logoUrl"),
     }
+
+
+def normalize_party_key(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text.casefold()
+
+
+def normalize_parties_payload(payload: Any) -> dict[str, dict[str, Any]]:
+    if isinstance(payload, dict):
+        if isinstance(payload.get("parties"), list):
+            items = payload.get("parties", [])
+        elif isinstance(payload.get("data"), list):
+            items = payload.get("data", [])
+        elif isinstance(payload.get("data"), dict) and isinstance(payload["data"].get("parties"), list):
+            items = payload["data"].get("parties", [])
+        else:
+            items = []
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        items = []
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for item in items:
+        party = normalize_party(item)
+        if not party:
+            continue
+        for key in (party.get("id"), party.get("name")):
+            normalized_key = normalize_party_key(key)
+            if normalized_key:
+                normalized[normalized_key] = party
+    return normalized
 
 
 def candidate_party_payload(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -193,6 +299,22 @@ class ResultsStore:
             ContentType="application/json; charset=utf-8",
         )
 
+    def read_absolute_json(self, key: str) -> dict[str, Any] | None:
+        try:
+            response = self.s3_client.get_object(Bucket=self.bucket, Key=key.strip().lstrip("/"))
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", "")).lower()
+            if code in {"nosuchkey", "404", "notfound"}:
+                return None
+            raise
+        return json.loads(response["Body"].read().decode("utf-8"))
+
+    def read_maybe_absolute_json(self, key: str) -> dict[str, Any] | None:
+        normalized = key.strip().lstrip("/")
+        if self.prefix and normalized.startswith(f"{self.prefix}/"):
+            return self.read_absolute_json(normalized)
+        return self.read_json(normalized)
+
     def list_json_objects(self, prefix: str, *, limit: int = 50) -> list[dict[str, Any]]:
         normalized_prefix = prefix.strip().strip("/")
         s3_prefix = self.key(f"{normalized_prefix}/" if normalized_prefix else "")
@@ -240,8 +362,8 @@ class ResultsStore:
         if not approval_key or not draft_key:
             return None
 
-        approval = self.read_json(approval_key)
-        draft = self.read_json(draft_key)
+        approval = self.read_maybe_absolute_json(approval_key)
+        draft = self.read_maybe_absolute_json(draft_key)
         if not approval or approval.get("state") != "approved" or not draft:
             return None
 
@@ -303,11 +425,13 @@ class CandidateCatalog:
         *,
         manifest_url: str,
         featured_url: str,
+        parties_url: str | None = None,
         timeout_seconds: float = 5,
         cache_seconds: int = 300,
     ) -> None:
         self.manifest_url = manifest_url
         self.featured_url = featured_url
+        self.parties_url = parties_url
         self.timeout_seconds = timeout_seconds
         self.cache_seconds = cache_seconds
         self._cached_at = 0.0
@@ -315,9 +439,27 @@ class CandidateCatalog:
         self._lock = Lock()
 
     def _read_json_url(self, url: str) -> dict[str, Any]:
-        request = Request(url, headers={"Accept": "application/json", "User-Agent": "election-results-api/1.0"})
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
+      payload = read_json_source(source=url, timeout_seconds=self.timeout_seconds)
+      return payload if isinstance(payload, dict) else {}
+
+    def _read_json_value(self, url: str) -> Any:
+      return read_json_source(source=url, timeout_seconds=self.timeout_seconds)
+
+    def _resolve_party(
+        self,
+        item: dict[str, Any],
+        candidate: dict[str, Any],
+        parties: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        embedded_party = normalize_party(candidate.get("party")) or normalize_party(item.get("party"))
+        if embedded_party:
+            return embedded_party
+        for key_name in ("partyId", "partyName", "party"):
+            for source in (candidate, item):
+                party_key = normalize_party_key(source.get(key_name))
+                if party_key and party_key in parties:
+                    return parties[party_key]
+        return None
 
     def candidates_by_number(self) -> dict[int, dict[str, Any]]:
         now = monotonic()
@@ -331,6 +473,11 @@ class CandidateCatalog:
 
             manifest = self._read_json_url(self.manifest_url)
             featured = self._read_json_url(self.featured_url)
+            parties = (
+                normalize_parties_payload(self._read_json_value(self.parties_url))
+                if self.parties_url
+                else {}
+            )
             candidates: dict[int, dict[str, Any]] = {}
 
             for profile in manifest.get("profiles", []):
@@ -344,6 +491,9 @@ class CandidateCatalog:
                     {
                         "candidateId": profile.get("id"),
                         "name": profile.get("name"),
+                        "partyId": profile.get("partyId"),
+                        "partyName": profile.get("partyName"),
+                        "groupName": profile.get("groupName"),
                     }
                 )
 
@@ -365,7 +515,13 @@ class CandidateCatalog:
                     item["candidateSrc"] = candidate["candidateSrc"]
                 if candidate.get("backgroundSrc"):
                     item["backgroundSrc"] = candidate["backgroundSrc"]
-                party = normalize_party(candidate.get("party"))
+                if candidate.get("partyId"):
+                    item["partyId"] = candidate["partyId"]
+                if candidate.get("partyName"):
+                    item["partyName"] = candidate["partyName"]
+                if candidate.get("groupName"):
+                    item["groupName"] = candidate["groupName"]
+                party = self._resolve_party(item, candidate, parties)
                 if party:
                     item["party"] = party
 
@@ -389,11 +545,8 @@ class DistrictCatalog:
         self._cached_districts: list[dict[str, Any]] = []
         self._lock = Lock()
 
-    def _read_json_url(self) -> list[dict[str, Any]]:
-        request = Request(self.url, headers={"Accept": "application/json", "User-Agent": "election-results-api/1.0"})
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return payload if isinstance(payload, list) else []
+    def _read_json_url(self) -> Any:
+      return read_json_source(source=self.url, timeout_seconds=self.timeout_seconds)
 
     def districts(self) -> list[dict[str, Any]]:
         now = monotonic()
@@ -403,20 +556,29 @@ class DistrictCatalog:
             now = monotonic()
             if self._cached_districts and now - self._cached_at < self.cache_seconds:
                 return self._cached_districts
-            self._cached_districts = [
+            payload = self._read_json_url()
+            if isinstance(payload, list):
+              districts = [
                 without_nulls(item)
-                for item in self._read_json_url()
+                for item in payload
                 if isinstance(item, dict)
-            ]
+              ]
+            else:
+              districts = normalize_election_area_districts(payload)
+            self._cached_districts = districts
             self._cached_at = monotonic()
             return self._cached_districts
 
     def districts_by_id(self) -> dict[str, dict[str, Any]]:
-        return {
-            str(item["id"]): item
-            for item in self.districts()
-            if item.get("id") is not None
-        }
+        mapped: dict[str, dict[str, Any]] = {}
+        for item in self.districts():
+            if item.get("id") is not None:
+                mapped[str(item["id"])] = item
+            if item.get("areaNumber") is not None:
+                mapped[str(item["areaNumber"])] = item
+            if item.get("electionAreaId") is not None:
+                mapped[str(item["electionAreaId"])] = item
+        return mapped
 
 
 def build_governor_results(
@@ -483,23 +645,27 @@ def build_governor_results(
         "invalidBallots": "invalid_ballots",
         "abstainedBallots": "abstained_ballots",
     }
+    partial_sum_fields = {"eligibleVoters", "voterTurnout"}
     aggregates: dict[str, int | None] = {}
     warnings = []
     if total_units is None:
         warnings.append("totalUnits is unavailable because district master data could not be loaded.")
     for response_field, source_field in aggregate_fields.items():
         values = []
+        has_missing_values = False
         for result in approved_results:
             value = result.get(source_field)
             if value is None:
-                values = []
-                break
+                has_missing_values = True
+                continue
             try:
                 values.append(int(value))
             except (TypeError, ValueError):
-                values = []
-                break
-        aggregates[response_field] = sum(values) if values and len(values) == counted_units else None
+                has_missing_values = True
+        if response_field in partial_sum_fields:
+            aggregates[response_field] = sum(values) if values else None
+        else:
+            aggregates[response_field] = sum(values) if values and not has_missing_values and len(values) == counted_units else None
         if counted_units and aggregates[response_field] is None:
             warnings.append(f"{response_field} is unavailable or incomplete in approved results.")
     for candidate in candidates:
@@ -580,9 +746,15 @@ def build_district_results(
         if result.get("area_id") is not None
     }
     constituencies = []
+    unique_districts: dict[str, dict[str, Any]] = {}
+    for district in district_catalog.values():
+        district_id = str(district.get("id") or "")
+        if not district_id or district_id in unique_districts:
+            continue
+        unique_districts[district_id] = district
     bangkok_districts = [
         district
-        for district in district_catalog.values()
+        for district in unique_districts.values()
         if district.get("provinceCode") == 10
     ]
     bangkok_districts.sort(key=lambda district: int(district.get("id") or 0))
@@ -877,6 +1049,7 @@ store = ResultsStore(
 candidate_catalog = CandidateCatalog(
     manifest_url=settings.candidates_manifest_url,
     featured_url=settings.candidates_featured_url,
+    parties_url=settings.parties_url,
     timeout_seconds=settings.candidates_timeout_seconds,
     cache_seconds=settings.candidates_cache_seconds,
 )
@@ -957,8 +1130,8 @@ def read_data_mode_override() -> dict[str, Any]:
 
 
 def current_data_mode() -> str:
-    mode = str(read_data_mode_override().get("mode") or "latest_snapshot").strip()
-    return mode if mode in DATA_INTERPRETATION_MODES else "latest_snapshot"
+    mode = str(read_data_mode_override().get("mode") or settings.default_data_mode).strip()
+    return mode if mode in DATA_INTERPRETATION_MODES else settings.default_data_mode
 
 
 def data_mode_options() -> list[dict[str, str]]:
@@ -2915,6 +3088,16 @@ def governor_results_response(*, use_cache: bool = True) -> dict[str, Any]:
         return payload
 
 
+def read_static_export(relative_name: str) -> dict[str, Any] | None:
+    prefix = settings.static_results_prefix.strip().strip("/")
+    key = f"{prefix}/{relative_name}" if prefix else relative_name
+    try:
+        payload = store.read_absolute_json(key)
+    except (BotoCoreError, ClientError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _build_governor_results_response() -> dict[str, Any]:
     try:
         candidates_by_number = candidate_catalog.candidates_by_number()
@@ -2930,6 +3113,10 @@ def _build_governor_results_response() -> dict[str, Any]:
         total_units = None
     mode = current_data_mode()
     approved_results = interpreted_public_results(mode)
+    if settings.enable_static_results_fallback and not approved_results:
+        static_payload = read_static_export("sumary.json")
+        if static_payload:
+            return static_payload
     payload = build_governor_results(
         approved_results=approved_results,
         candidate_catalog=candidates_by_number,
@@ -2964,6 +3151,10 @@ def _build_governor_district_results_response() -> dict[str, Any]:
 
     mode = current_data_mode()
     approved_results = interpreted_public_results(mode)
+    if settings.enable_static_results_fallback and not approved_results:
+        static_payload = read_static_export("districts.json")
+        if static_payload:
+            return static_payload
 
     return build_district_results(
         approved_results=approved_results,
@@ -2988,12 +3179,18 @@ def export_static_governor_results() -> dict[str, Any]:
 
 
 @app.get("/api/v1/governor-results/summary", dependencies=[Depends(require_api_key)])
-def get_governor_results_summary() -> dict[str, Any]:
-    return governor_results_response()
+def get_governor_results_summary(
+    fresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    return governor_results_response(use_cache=not fresh)
 
 
 @app.get("/api/v1/governor-results/districts", dependencies=[Depends(require_api_key)])
-def get_governor_district_results() -> dict[str, Any]:
+def get_governor_district_results(
+    fresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    if fresh:
+        invalidate_result_caches()
     return _build_governor_district_results_response()
 
 
