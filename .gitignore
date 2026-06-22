@@ -10,6 +10,9 @@ hermes/supervisor/cloudflared/config.yml
 hermes/supervisor/cloudflared/*.json
 hermes/ocr_worker/runtime/
 hermes/ocr_worker/runtime-ec2/
+hermes/supervisor/ollama/data/
+recovered-prod.env
+ssm-*.json
 
 paddle_ocr/
 __pycache__/
