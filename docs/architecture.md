@@ -43,11 +43,11 @@ Model provider ที่รองรับ (config ผ่าน `.env`):
 
 | Resource | ชื่อ | ใช้โดย |
 |---|---|---|
-| **S3** | `bkk-election-images-party` | line-relay (write), ocr-worker (read/write), results-api (read) |
-| **SQS FIFO** | `election-ocr-jobs.fifo` | line-relay (produce) → ocr-worker (consume) |
-| **SQS DLQ** | `election-ocr-dlq.fifo` | รับงาน OCR ที่ fail เกิน retry limit |
-| **EC2** | `c7i-flex.large` | รัน Docker Compose ทั้งหมด |
-| **Elastic IP** | `47.131.183.28` | DNS ชี้เข้าเครื่อง |
+| **S3** | `bkk-election-images-dev` | line-relay (write), ocr-worker (read/write), results-api (read) |
+| **SQS FIFO** | `election-ocr-jobs-dev.fifo` | line-relay (produce) → ocr-worker (consume) |
+| **SQS DLQ** | `election-ocr-dlq-dev.fifo` | รับงาน OCR ที่ fail เกิน retry limit |
+| **EC2** | `election-platform-dev` (`i-00dc21912d495beed`) | รัน Docker Compose ทั้งหมด |
+| **Elastic IP** | `18.142.219.248` | DNS ชี้เข้าเครื่อง |
 | **SSM Parameter** | `/election/compose-env` | เก็บ `.env` production |
 
 ## Data Flow

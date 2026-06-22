@@ -58,3 +58,5 @@ Caddy เปิดเฉพาะ port `80/443` และออก TLS certifica
 
 รายละเอียดการติดตั้งอยู่ที่ [`deploy/ec2/README.md`](deploy/ec2/README.md)
 และภาพรวมระบบอยู่ที่ [`docs/architecture.md`](docs/architecture.md)
+Runtime notes for public governor results:
+[`docs/governor-results-runtime.md`](docs/governor-results-runtime.md)

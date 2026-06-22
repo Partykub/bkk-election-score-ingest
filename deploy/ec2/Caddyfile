@@ -1,8 +1,4 @@
-{
-	email {$CADDY_EMAIL}
-}
-
-{$PUBLIC_DOMAIN} {
+	{$PUBLIC_SCHEME:https}://{$PUBLIC_DOMAIN} {
 	encode zstd gzip
 
 	@line path /line/webhook /webhook /line/liff/*

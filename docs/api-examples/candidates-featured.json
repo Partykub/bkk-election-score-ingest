@@ -1,0 +1,203 @@
+{
+  "candidates": [
+    {
+      "id": "candidate-01",
+      "candidateNumber": 1,
+      "name": "ผู้สมัครหมายเลข 1",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-02",
+      "candidateNumber": 2,
+      "name": "ผู้สมัครหมายเลข 2",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-03",
+      "candidateNumber": 3,
+      "name": "ผู้สมัครหมายเลข 3",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-04",
+      "candidateNumber": 4,
+      "name": "ผู้สมัครหมายเลข 4",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-05",
+      "candidateNumber": 5,
+      "name": "ผู้สมัครหมายเลข 5",
+      "party": {
+        "id": "democrat-party",
+        "name": "พรรคประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/democrat-party.png"
+      }
+    },
+    {
+      "id": "candidate-06",
+      "candidateNumber": 6,
+      "name": "ผู้สมัครหมายเลข 6",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-07",
+      "candidateNumber": 7,
+      "name": "ผู้สมัครหมายเลข 7",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      },
+      "groupName": "กลุ่มกรุงเทพบินได้"
+    },
+    {
+      "id": "candidate-08",
+      "candidateNumber": 8,
+      "name": "ผู้สมัครหมายเลข 8",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-09",
+      "candidateNumber": 9,
+      "name": "ผู้สมัครหมายเลข 9",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-10",
+      "candidateNumber": 10,
+      "name": "ผู้สมัครหมายเลข 10",
+      "party": {
+        "id": "people-party",
+        "name": "พรรคประชาชน",
+        "color": "#F97316",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/people-party.png"
+      }
+    },
+    {
+      "id": "candidate-11",
+      "candidateNumber": 11,
+      "name": "ผู้สมัครหมายเลข 11",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-12",
+      "candidateNumber": 12,
+      "name": "ผู้สมัครหมายเลข 12",
+      "party": {
+        "id": "economy-party",
+        "name": "พรรคเศรษฐกิจ",
+        "color": "#10B981",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/economy-party.png"
+      }
+    },
+    {
+      "id": "candidate-13",
+      "candidateNumber": 13,
+      "name": "ผู้สมัครหมายเลข 13",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-14",
+      "candidateNumber": 14,
+      "name": "ผู้สมัครหมายเลข 14",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-15",
+      "candidateNumber": 15,
+      "name": "ผู้สมัครหมายเลข 15",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-16",
+      "candidateNumber": 16,
+      "name": "ผู้สมัครหมายเลข 16",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-17",
+      "candidateNumber": 17,
+      "name": "ผู้สมัครหมายเลข 17",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    },
+    {
+      "id": "candidate-18",
+      "candidateNumber": 18,
+      "name": "ผู้สมัครหมายเลข 18",
+      "party": {
+        "id": "independent",
+        "name": "อิสระ",
+        "color": "#6B7280",
+        "logoUrl": null
+      }
+    }
+  ]
+}

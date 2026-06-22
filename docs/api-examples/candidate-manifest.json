@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "1.0",
+  "resource": "candidate-manifest",
+  "collectionKey": "featured-candidates",
+  "source": "ch7-feed-web",
+  "generatedAt": "2026-06-05T08:21:00.044Z",
+  "publishedAt": "2026-06-05T08:21:02.426Z",
+  "totalItems": 18,
+  "featuredPath": "api-data/candidates/featured.json",
+  "profilesBasePath": "api-data/candidates/profiles",
+  "profiles": [
+    {
+      "id": "korakasivat",
+      "path": "api-data/candidates/profiles/korakasivat.json",
+      "sortOrder": 1,
+      "candidateNumber": 1,
+      "name": "กรกสิวัฒน์ เกษมศรี",
+      "partyId": "independent"
+    },
+    {
+      "id": "samai",
+      "path": "api-data/candidates/profiles/samai.json",
+      "sortOrder": 2,
+      "candidateNumber": 2,
+      "name": "สมัย ละเลิศ",
+      "partyId": "independent"
+    },
+    {
+      "id": "pongsak",
+      "path": "api-data/candidates/profiles/pongsak.json",
+      "sortOrder": 3,
+      "candidateNumber": 3,
+      "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+      "partyId": "independent"
+    },
+    {
+      "id": "prateep",
+      "path": "api-data/candidates/profiles/prateep.json",
+      "sortOrder": 4,
+      "candidateNumber": 4,
+      "name": "ประทีป วัชรโชคเกษม",
+      "partyId": "independent"
+    },
+    {
+      "id": "anucha",
+      "path": "api-data/candidates/profiles/anucha.json",
+      "sortOrder": 5,
+      "candidateNumber": 5,
+      "name": "อนุชา บูรพชัยศรี",
+      "partyId": "democrat-party"
+    },
+    {
+      "id": "phisan",
+      "path": "api-data/candidates/profiles/phisan.json",
+      "sortOrder": 6,
+      "candidateNumber": 6,
+      "name": "พิศาล กิตติเยาวมาลย์",
+      "partyId": "independent"
+    },
+    {
+      "id": "phasapong",
+      "path": "api-data/candidates/profiles/phasapong.json",
+      "sortOrder": 7,
+      "candidateNumber": 7,
+      "name": "ภาสพงศ์ ไชยวิริญะวาณิชย์",
+      "partyId": "independent",
+      "groupName": "กลุ่มกรุงเทพบินได้"
+    },
+    {
+      "id": "veerapoj",
+      "path": "api-data/candidates/profiles/veerapoj.json",
+      "sortOrder": 8,
+      "candidateNumber": 8,
+      "name": "วีรพจน์ ลือประสิทธิ์สกุล",
+      "partyId": "independent"
+    },
+    {
+      "id": "chadchart",
+      "path": "api-data/candidates/profiles/chadchart.json",
+      "sortOrder": 9,
+      "candidateNumber": 9,
+      "name": "ชัชชาติ สิทธิพันธุ์",
+      "partyId": "independent"
+    },
+    {
+      "id": "chaiwat",
+      "path": "api-data/candidates/profiles/chaiwat.json",
+      "sortOrder": 10,
+      "candidateNumber": 10,
+      "name": "ชัยวัฒน์ สถาวรวิจิตร",
+      "partyId": "people-party"
+    },
+    {
+      "id": "prayoon",
+      "path": "api-data/candidates/profiles/prayoon.json",
+      "sortOrder": 11,
+      "candidateNumber": 11,
+      "name": "ประยูร ครองยศ",
+      "partyId": "independent"
+    },
+    {
+      "id": "chanthep",
+      "path": "api-data/candidates/profiles/chanthep.json",
+      "sortOrder": 12,
+      "candidateNumber": 12,
+      "name": "ชาญเทพ เสสะเวช",
+      "partyId": "economy-party"
+    },
+    {
+      "id": "khomsan",
+      "path": "api-data/candidates/profiles/khomsan.json",
+      "sortOrder": 13,
+      "candidateNumber": 13,
+      "name": "คมสัน พันธุ์วิชาติกุล",
+      "partyId": "independent"
+    },
+    {
+      "id": "mallika",
+      "path": "api-data/candidates/profiles/mallika.json",
+      "sortOrder": 14,
+      "candidateNumber": 14,
+      "name": "มัลลิกา มหาสุข",
+      "partyId": "independent"
+    },
+    {
+      "id": "olar",
+      "path": "api-data/candidates/profiles/olar.json",
+      "sortOrder": 15,
+      "candidateNumber": 15,
+      "name": "โอฬาร ตั้งตราตระกูล",
+      "partyId": "independent"
+    },
+    {
+      "id": "srirat",
+      "path": "api-data/candidates/profiles/srirat.json",
+      "sortOrder": 16,
+      "candidateNumber": 16,
+      "name": "ศรีรัฏฐ์ ช่างเพ็ชร",
+      "partyId": "independent"
+    },
+    {
+      "id": "lallana",
+      "path": "api-data/candidates/profiles/lallana.json",
+      "sortOrder": 17,
+      "candidateNumber": 17,
+      "name": "ลลนา มงคลหัสดินทร์",
+      "partyId": "independent"
+    },
+    {
+      "id": "somchai",
+      "path": "api-data/candidates/profiles/somchai.json",
+      "sortOrder": 18,
+      "candidateNumber": 18,
+      "name": "สมชัย เจริญวรเกียรติ",
+      "partyId": "independent"
+    }
+  ]
+}

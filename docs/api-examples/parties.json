@@ -1,6 +1,26 @@
-{
-    "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-    "name": "ประชาธิปัตย์",
+[
+  {
+    "id": "independent",
+    "name": "อิสระ",
+    "color": "#6B7280",
+    "logoUrl": null
+  },
+  {
+    "id": "democrat-party",
+    "name": "พรรคประชาธิปัตย์",
     "color": "#016DDF",
-    "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
-}
+    "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/democrat-party.png"
+  },
+  {
+    "id": "people-party",
+    "name": "พรรคประชาชน",
+    "color": "#F97316",
+    "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/people-party.png"
+  },
+  {
+    "id": "economy-party",
+    "name": "พรรคเศรษฐกิจ",
+    "color": "#10B981",
+    "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/economy-party.png"
+  }
+]

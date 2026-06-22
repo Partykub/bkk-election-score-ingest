@@ -46,6 +46,7 @@ Their implementation lives under `services/`.
 The production model endpoint is configured through `.env` values from SSM:
 
 - `HERMES_MODEL`
+- `ANTHROPIC_API_KEY`
 - `OCR_WORKER_HERMES_MODEL`
 - `OCR_WORKER_MODEL_NAME`
 - `OLLAMA_API_BASE` or `OPENAI_API_BASE`
@@ -54,3 +55,7 @@ The current AWS runtime points Hermes at a remote Ollama-compatible `/v1`
 endpoint. The Hermes runtime directory is mounted at `/opt/data` and lives
 outside git, so model/provider changes may need both `.env` and runtime
 `config.yaml` to be aligned.
+
+For local Claude testing, the root Compose stack can pass `ANTHROPIC_API_KEY`
+through to the Hermes container. A minimal local setup is `HERMES_MODEL=claude-sonnet-4-6`
+with `ANTHROPIC_API_KEY` set and Ollama/OpenAI-compatible base URLs left empty.

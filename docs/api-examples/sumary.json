@@ -17,10 +17,10 @@
     "validBallots": 1958000,
     "invalidBallots": 30000,
     "abstainedBallots": 20000,
-    "lastUpdatedAt": "2026-06-05T11:25:02.000Z",
     "validBallotsPercentage": 97.51,
     "invalidBallotsPercentage": 1.49,
-    "abstainedBallotsPercentage": 1
+    "abstainedBallotsPercentage": 1,
+    "lastUpdatedAt": "2026-06-05T11:25:02.000Z"
   },
   "candidates": [
     {
