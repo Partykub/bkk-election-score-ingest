@@ -141,7 +141,19 @@ class ResultsStoreTests(unittest.TestCase):
                 },
             ],
             candidate_catalog={
-                1: {"candidateId": "one", "name": "Candidate One", "color": "#111111"},
+                1: {
+                    "candidateId": "one",
+                    "name": "Candidate One",
+                    "color": "#111111",
+                    "candidateSrc": "https://example.test/one.png",
+                    "backgroundSrc": "https://example.test/one-bg.png",
+                    "party": {
+                        "id": "party-one",
+                        "name": "Party One",
+                        "color": "#010101",
+                        "logoUrl": "https://example.test/party-one.png",
+                    },
+                },
                 2: {"candidateId": "two", "name": "Candidate Two", "color": "#222222"},
             },
             total_units=50,
@@ -162,6 +174,9 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertIsNone(payload["summary"]["validBallots"])
         self.assertIsNone(payload["summary"]["invalidBallots"])
         self.assertIsNone(payload["summary"]["abstainedBallots"])
+        self.assertIsNone(payload["summary"]["validBallotsPercentage"])
+        self.assertIsNone(payload["summary"]["invalidBallotsPercentage"])
+        self.assertIsNone(payload["summary"]["abstainedBallotsPercentage"])
         self.assertEqual(payload["candidates"][0]["candidateNumber"], 1)
         self.assertEqual(payload["candidates"][0]["voteCount"], 150)
         self.assertEqual(payload["candidates"][0]["votePercentage"], 50.0)
@@ -170,6 +185,17 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertEqual(payload["candidates"][0]["name"], "Candidate One")
         self.assertEqual(payload["candidates"][0]["candidateId"], "one")
         self.assertEqual(payload["candidates"][0]["color"], "#111111")
+        self.assertEqual(payload["candidates"][0]["candidateSrc"], "https://example.test/one.png")
+        self.assertEqual(payload["candidates"][0]["backgroundSrc"], "https://example.test/one-bg.png")
+        self.assertEqual(
+            payload["candidates"][0]["party"],
+            {
+                "id": "party-one",
+                "name": "Party One",
+                "color": "#010101",
+                "logoUrl": "https://example.test/party-one.png",
+            },
+        )
         self.assertNotIn("sources", payload)
         self.assertFalse(payload["dataQuality"]["isComplete"])
         self.assertFalse(payload["dataQuality"]["isDelayed"])
@@ -191,6 +217,12 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertIsNone(candidate["candidateId"])
         self.assertIsNone(candidate["name"])
         self.assertIsNone(candidate["color"])
+        self.assertIsNone(candidate["candidateSrc"])
+        self.assertIsNone(candidate["backgroundSrc"])
+        self.assertEqual(
+            candidate["party"],
+            {"id": None, "name": None, "color": None, "logoUrl": None},
+        )
         self.assertIsNone(payload["summary"]["totalUnits"])
         self.assertIsNone(payload["summary"]["countedPercentage"])
         self.assertIsNone(payload["dataQuality"]["isComplete"])
@@ -227,6 +259,9 @@ class ResultsStoreTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["validBallots"], 165)
         self.assertEqual(payload["summary"]["invalidBallots"], 8)
         self.assertEqual(payload["summary"]["abstainedBallots"], 7)
+        self.assertEqual(payload["summary"]["validBallotsPercentage"], 91.67)
+        self.assertEqual(payload["summary"]["invalidBallotsPercentage"], 4.44)
+        self.assertEqual(payload["summary"]["abstainedBallotsPercentage"], 3.89)
         self.assertTrue(payload["dataQuality"]["isComplete"])
         self.assertFalse(payload["dataQuality"]["isDelayed"])
 
@@ -249,6 +284,13 @@ class ResultsStoreTests(unittest.TestCase):
                         "candidateNumber": 1,
                         "themeColor": "#123456",
                         "candidateSrc": "https://example.test/one.png",
+                        "backgroundSrc": "https://example.test/one-bg.png",
+                        "party": {
+                            "id": "party-one",
+                            "name": "Party One",
+                            "color": "#010101",
+                            "logoUrl": "https://example.test/party-one.png",
+                        },
                     },
                 ]
             },
@@ -264,6 +306,13 @@ class ResultsStoreTests(unittest.TestCase):
                 "name": "Candidate One",
                 "color": "#123456",
                 "candidateSrc": "https://example.test/one.png",
+                "backgroundSrc": "https://example.test/one-bg.png",
+                "party": {
+                    "id": "party-one",
+                    "name": "Party One",
+                    "color": "#010101",
+                    "logoUrl": "https://example.test/party-one.png",
+                },
             },
         )
 

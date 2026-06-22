@@ -111,6 +111,33 @@ def without_nulls(value: Any) -> Any:
     return value
 
 
+def normalize_party(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "id": value.get("id"),
+        "name": value.get("name"),
+        "color": value.get("color"),
+        "logoUrl": value.get("logoUrl"),
+    }
+
+
+def candidate_party_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    party = normalize_party(metadata.get("party")) or {}
+    return {
+        "id": party.get("id"),
+        "name": party.get("name"),
+        "color": party.get("color"),
+        "logoUrl": party.get("logoUrl"),
+    }
+
+
+def percentage_of(value: int | None, total: int | None) -> float | None:
+    if value is None or not total:
+        return None
+    return round(value / total * 100, 2)
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -323,6 +350,11 @@ class CandidateCatalog:
                     item["color"] = candidate["themeColor"]
                 if candidate.get("candidateSrc"):
                     item["candidateSrc"] = candidate["candidateSrc"]
+                if candidate.get("backgroundSrc"):
+                    item["backgroundSrc"] = candidate["backgroundSrc"]
+                party = normalize_party(candidate.get("party"))
+                if party:
+                    item["party"] = party
 
             self._cached_candidates = candidates
             self._cached_at = monotonic()
@@ -410,9 +442,12 @@ def build_governor_results(
             "candidateId": catalog.get(candidate_number, {}).get("candidateId"),
             "candidateNumber": candidate_number,
             "name": catalog.get(candidate_number, {}).get("name") or candidate_names.get(candidate_number),
+            "candidateSrc": catalog.get(candidate_number, {}).get("candidateSrc"),
             "color": catalog.get(candidate_number, {}).get("color"),
             "voteCount": vote_count,
             "votePercentage": round(vote_count / total_votes * 100, 2) if total_votes else 0,
+            "backgroundSrc": catalog.get(candidate_number, {}).get("backgroundSrc"),
+            "party": candidate_party_payload(catalog.get(candidate_number, {})),
         }
         for candidate_number, vote_count in vote_totals.items()
     ]
@@ -472,6 +507,9 @@ def build_governor_results(
         if eligible_voters and voter_turnout is not None
         else None
     )
+    valid_ballots = aggregates["validBallots"]
+    invalid_ballots = aggregates["invalidBallots"]
+    abstained_ballots = aggregates["abstainedBallots"]
 
     generated_timestamp = generated_at or utc_now_iso()
     is_delayed = None
@@ -499,9 +537,12 @@ def build_governor_results(
             "eligibleVoters": eligible_voters,
             "voterTurnout": voter_turnout,
             "voterTurnoutPercentage": voter_turnout_percentage,
-            "validBallots": aggregates["validBallots"],
-            "invalidBallots": aggregates["invalidBallots"],
-            "abstainedBallots": aggregates["abstainedBallots"],
+            "validBallots": valid_ballots,
+            "invalidBallots": invalid_ballots,
+            "abstainedBallots": abstained_ballots,
+            "validBallotsPercentage": percentage_of(valid_ballots, voter_turnout),
+            "invalidBallotsPercentage": percentage_of(invalid_ballots, voter_turnout),
+            "abstainedBallotsPercentage": percentage_of(abstained_ballots, voter_turnout),
             "lastUpdatedAt": last_updated_at,
         },
         "candidates": candidates,
@@ -1659,8 +1700,6 @@ MONITOR_HTML = """<!doctype html>
             <select id="dataModeSelect" name="mode">
               <option value="latest_snapshot">ใช้ยอดล่าสุดของแต่ละเขต</option>
               <option value="incremental_delta">บวกทุกรอบที่ approved ในเขต</option>
-              <option value="auto_conservative">อัตโนมัติแบบระวังไว้ก่อน</option>
-              <option value="manual_override_priority">ใช้ยอดล่าสุดและให้ override มาก่อน</option>
             </select>
           </label>
           <div class="muted" id="dataModeDescription"></div>
@@ -1931,8 +1970,6 @@ MONITOR_HTML = """<!doctype html>
     const dataModeText = {
       latest_snapshot: 'ใช้ยอดล่าสุดของแต่ละเขต เหมาะกับรูปที่เป็นยอดรวม ณ เวลานั้น',
       incremental_delta: 'บวกทุกรอบที่ approved ในเขต เหมาะเมื่อรูปแต่ละรอบเป็นยอดเพิ่มเฉพาะรอบ',
-      auto_conservative: 'ใช้ยอดล่าสุดไว้ก่อน และให้ operator เทียบ history ใน modal',
-      manual_override_priority: 'ใช้ยอดล่าสุดร่วมกับค่า override รายเขต เมื่อข้อมูลจากรูปยังไม่นิ่ง',
     };
     function updateDataModeDescription() {
       const mode = document.getElementById('dataModeSelect').value;
