@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect data mode override and area3 approved payload",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc '\npython3 - <<\"PY\"\nimport json, boto3\ns3 = boto3.client(\"s3\", region_name=\"ap-southeast-1\")\nbucket = \"bkk-election-images-prod\"\nkeys = [\n    \"api-data/score/monitor/overrides/data-mode.json\",\n    \"api-data/score/indexes/by-area/default/3/submissions.json\",\n]\nfor key in keys:\n    try:\n        obj = s3.get_object(Bucket=bucket, Key=key)\n        body = json.loads(obj[\"Body\"].read().decode())\n        print(\"KEY=\" + key)\n        print(json.dumps(body, ensure_ascii=False).encode(\"ascii\",\"backslashreplace\").decode())\n    except Exception as exc:\n        print(\"KEY=\" + key)\n        print(\"ERR=\" + str(exc).encode(\"ascii\",\"backslashreplace\").decode())\nPY'"
+    ]
+  }
+}

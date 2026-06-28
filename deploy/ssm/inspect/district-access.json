@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect district master access from prod",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'echo ---S3-LS--- && aws s3 ls s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json && echo ---S3-HEAD--- && aws s3 cp s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json - | head -c 600 && echo && echo ---CONTAINER-ENV--- && docker compose -f /opt/election/compose.yaml --env-file /opt/election/.env exec -T results-api env | grep RESULTS_API_DISTRICTS_URL && echo ---LOCAL-CURL--- && curl -fsS http://127.0.0.1:8080/api/v1/governor-results/districts?fresh=1'"
+    ]
+  }
+}

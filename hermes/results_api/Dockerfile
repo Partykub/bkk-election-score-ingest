@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/results-api-requirements.txt
 
 COPY ./hermes /app/hermes
 COPY ./docs/api-examples/districts.json /app/docs/api-examples/districts.json
+COPY ./hermes/results_api/fixtures /app/hermes/results_api/fixtures
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

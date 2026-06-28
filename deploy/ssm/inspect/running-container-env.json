@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect running docker containers and env without compose",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'echo DOCKER_PS && docker ps --format \"table {{.Names}}\t{{.Image}}\t{{.Status}}\" && echo RESULTS_API_MATCH && cid=$(docker ps --filter name=results-api --format \"{{.ID}}\" | head -n 1) && echo CID=$cid && docker inspect $cid --format \"{{range .Config.Env}}{{println .}}{{end}}\" | sort'"
+    ]
+  }
+}

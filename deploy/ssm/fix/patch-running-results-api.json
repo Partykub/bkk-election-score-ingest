@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "patch running results-api container and export static",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker cp hermes/results_api/app.py election-results-api-1:/app/hermes/results_api/app.py && docker restart election-results-api-1 >/dev/null && for i in $(seq 1 30); do status=$(docker inspect --format \"{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}\" election-results-api-1); echo health=$status; if [ \"$status\" = \"healthy\" ] || [ \"$status\" = \"running\" ]; then break; fi; sleep 2; done && docker exec election-results-api-1 python -c \"from hermes.results_api.app import export_static_governor_results; print(export_static_governor_results())\"'"
+    ]
+  }
+}

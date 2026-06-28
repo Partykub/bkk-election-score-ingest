@@ -1,0 +1,12 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify BKK external fetch from prod results-api container",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.governor_results.http_fetch import fetch_json_http\nurl = \"https://bangkokvote69.bangkok.go.th/results/69-governor-electiondata.json\"\npayload = fetch_json_http(url, timeout_seconds=30)\ntotal = payload.get(\"total\") if isinstance(payload.get(\"total\"), dict) else {}\npolling = total.get(\"pollingUnits\") if isinstance(total.get(\"pollingUnits\"), dict) else {}\nprint({\"ok\": True, \"type\": payload.get(\"type\"), \"districtCount\": len(payload.get(\"districts\") or []), \"reportedPollingUnits\": polling.get(\"reported\"), \"totalPollingUnits\": polling.get(\"total\")})\nPY'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python -c \"import cloudscraper; print(cloudscraper.__version__)\"'"
+    ]
+  }
+}

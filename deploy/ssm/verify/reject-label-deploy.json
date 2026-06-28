@@ -1,0 +1,13 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify prod checksums and compose status",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "cd /opt/election",
+      "sha256sum hermes/supervisor/services/intake_server.py hermes/ocr_worker/__main__.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env ps'"
+    ]
+  }
+}

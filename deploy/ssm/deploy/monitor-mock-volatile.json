@@ -1,0 +1,26 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "deploy results-api monitor mock endpoint with volatile ticker",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "TS=monitor-mock-volatile-20260625",
+      "BUCKET=ch7-static-bkkelection2569",
+      "PREFIX=s3://${BUCKET}/tmp/deploy",
+      "install -d -o ec2-user -g ec2-user /opt/election/hermes/results_api/fixtures",
+      "if [ -f /opt/election/hermes/results_api/app.py ]; then cp /opt/election/hermes/results_api/app.py /opt/election/hermes/results_api/app.py.bak-${TS}; fi",
+      "if [ -f /opt/election/hermes/results_api/Dockerfile ]; then cp /opt/election/hermes/results_api/Dockerfile /opt/election/hermes/results_api/Dockerfile.bak-${TS}; fi",
+      "aws s3 cp ${PREFIX}/hermes-results-api-app-${TS}.py /opt/election/hermes/results_api/app.py",
+      "aws s3 cp ${PREFIX}/hermes-results-api-governor-mock-ticker-${TS}.py /opt/election/hermes/results_api/governor_mock_ticker.py",
+      "aws s3 cp ${PREFIX}/hermes-results-api-governor-mock-final-${TS}.json /opt/election/hermes/results_api/fixtures/governor-mock-final.json",
+      "aws s3 cp ${PREFIX}/hermes-results-api-dockerfile-${TS} /opt/election/hermes/results_api/Dockerfile",
+      "chown -R ec2-user:ec2-user /opt/election/hermes/results_api/app.py /opt/election/hermes/results_api/governor_mock_ticker.py /opt/election/hermes/results_api/fixtures /opt/election/hermes/results_api/Dockerfile",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env up -d --no-deps --build results-api'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && for i in $(seq 1 45); do status=$(docker inspect --format \"{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}\" election-results-api-1); echo results-api=$status; if [ \"$status\" = \"healthy\" ] || [ \"$status\" = \"running\" ]; then break; fi; sleep 2; done'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import effective_monitor_mock_config\nfrom hermes.results_api.governor_mock_ticker import load_final_fixture, fresh_mock_seed\nmock = effective_monitor_mock_config()\nfixture = load_final_fixture()\nprint({\"mockEnabled\": mock.get(\"enabled\"), \"mockTargetKey\": mock.get(\"targetKey\"), \"fixtureDistricts\": len(fixture.get(\"districts\") or []), \"freshSeed\": fresh_mock_seed()})\nPY'",
+      "curl -fsS http://127.0.0.1:8080/monitor | grep -q startMockButton && echo MONITOR_MOCK_UI=ok || (echo MONITOR_MOCK_UI=missing; exit 1)",
+      "curl -fsS http://127.0.0.1:8080/api/v1/monitor/source | grep -q '\"mock\"' && echo MONITOR_MOCK_API=ok || (echo MONITOR_MOCK_API=missing; exit 1)"
+    ]
+  }
+}

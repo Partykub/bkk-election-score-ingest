@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify area name resolution deploy",
+  "Parameters": {
+    "commands": [
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python -m unittest hermes.governor_results.test_area_resolution -v'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T ocr-worker python - <<\"PY\"\nfrom hermes.governor_results.area_resolution import normalize_area_id_value\nfrom unittest.mock import patch, MagicMock\nlookup = MagicMock()\nlookup.resolve_area_id.return_value = \"13\"\nwith patch(\"hermes.governor_results.area_resolution.get_district_lookup\", return_value=lookup):\n    assert normalize_area_id_value(\"district-name\") == \"13\"\nprint(\"OCR_WORKER_VERIFY_OK\")\nPY'"
+    ]
+  }
+}

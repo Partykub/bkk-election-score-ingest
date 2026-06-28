@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect override and area3 with aws cli",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'for key in api-data/score/monitor/overrides/data-mode.json api-data/score/indexes/by-area/default/3/submissions.json; do echo KEY=$key; aws s3 cp s3://bkk-election-images-prod/$key - || true; echo; done'"
+    ]
+  }
+}

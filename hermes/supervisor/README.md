@@ -25,7 +25,7 @@ the root Compose stack.
 
 - `line_webhook_relay.py` receives Caddy-forwarded LINE webhook traffic.
 - `services/intake_server.py` validates, deduplicates, persists source manifests,
-  downloads LINE images, and enqueues OCR jobs.
+  downloads LINE images, enqueues OCR jobs, and parses approval/correction text.
 - `../ocr_worker/__main__.py` consumes SQS jobs, calls the Hermes API, writes draft
   and approval manifests, and sends approval prompts back to LINE.
 - `../results_api/app.py` serves approved results from S3 through `/api/*`.
@@ -59,3 +59,18 @@ outside git, so model/provider changes may need both `.env` and runtime
 For local Claude testing, the root Compose stack can pass `ANTHROPIC_API_KEY`
 through to the Hermes container. A minimal local setup is `HERMES_MODEL=claude-sonnet-4-6`
 with `ANTHROPIC_API_KEY` set and Ollama/OpenAI-compatible base URLs left empty.
+
+## LINE Text Correction
+
+During `awaiting_approval`, operators can correct draft values by sending LINE text
+(no `แก้ไข` prefix required when the message matches a known field pattern).
+
+Supported overrides:
+
+- ballot summary: ผู้มีสิทธิ, ผู้มาใช้สิทธิ, บัตรดี, บัตรเสีย, ไม่ออกเสียง (plus shorthand `ดี`, `เสีย`, `no`, `งด`)
+- candidate scores: `4=14`, `ผู้สมัคร 4=14`, `คะแนน 4=14`
+- area: `เขต 13`
+
+Line-number shortcuts (`1=1000`, `2=900`, …) are **not** supported.
+
+Full format reference: [`docs/line-correction-parsing.md`](../../docs/line-correction-parsing.md)

@@ -1,0 +1,509 @@
+{
+  "schemaVersion": "1.0",
+  "resource": "constituency-bangkok",
+  "generatedAt": "2026-06-19T06:44:03.211Z",
+  "data": {
+    "constituencies": [
+      {
+        "areaId": "1",
+        "number": 1,
+        "name": "พระนคร",
+        "leadingCandidateId": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "countedPercentage": 0,
+        "eligibleVoters": 5000000,
+        "voterTurnout": 0,
+        "voterTurnoutPercentage": 0,
+        "validBallots": 0,
+        "invalidBallots": 0,
+        "abstainedBallots": 0,
+        "lastUpdatedAt": "2026-06-05T11:25:02.000Z",
+        "% บัตรเสีย": 0,
+        "candidates": [
+          {
+            "candidateId": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+            "candidateNumber": 1,
+            "name": "กรกสิวัฒน์ เกษมศรี",
+            "party": {
+              "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+              "name": "ประชาธิปัตย์",
+              "color": "#016DDF",
+              "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png",
+              "totalSeat": 20
+            },
+            "color": "#F76198",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 1,
+            "isLeading": true
+          },
+          {
+            "candidateId": "pongsak",
+            "candidateNumber": 3,
+            "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/candidate.png",
+            "color": "#D57AF0",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 3,
+            "isLeading": false
+          },
+          {
+            "candidateId": "prateep",
+            "candidateNumber": 4,
+            "name": "ประทีป วัชรโชคเกษม",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/candidate.png",
+            "color": "#7148EF",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 4,
+            "isLeading": false
+          },
+          {
+            "candidateId": "samai",
+            "candidateNumber": 2,
+            "name": "สมัย ละเลิศ",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/candidate.png",
+            "color": "#1AA7B1",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 2,
+            "isLeading": false
+          }
+        ]
+      },
+      {
+        "areaId": "2",
+        "number": 2,
+        "name": "ดุสิต",
+        "leadingCandidateId": "korakasivat",
+        "candidates": [
+          {
+            "candidateId": "prateep",
+            "candidateNumber": 4,
+            "name": "ประทีป วัชรโชคเกษม",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/candidate.png",
+            "color": "#7148EF",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 4,
+            "isLeading": false
+          },
+          {
+            "candidateId": "pongsak",
+            "candidateNumber": 3,
+            "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/candidate.png",
+            "color": "#D57AF0",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 3,
+            "isLeading": false
+          },
+          {
+            "candidateId": "samai",
+            "candidateNumber": 2,
+            "name": "สมัย ละเลิศ",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/candidate.png",
+            "color": "#1AA7B1",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 2,
+            "isLeading": false
+          },
+          {
+            "candidateId": "korakasivat",
+            "candidateNumber": 1,
+            "name": "กรกสิวัฒน์ เกษมศรี",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/candidate.png",
+            "color": "#F76198",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 1,
+            "isLeading": true
+          }
+        ]
+      },
+      {
+        "areaId": "3",
+        "number": 3,
+        "name": "หนองจอก",
+        "leadingCandidateId": "korakasivat",
+        "candidates": [
+          {
+            "candidateId": "prateep",
+            "candidateNumber": 4,
+            "name": "ประทีป วัชรโชคเกษม",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/candidate.png",
+            "color": "#7148EF",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 4,
+            "isLeading": false
+          },
+          {
+            "candidateId": "pongsak",
+            "candidateNumber": 3,
+            "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/candidate.png",
+            "color": "#D57AF0",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 3,
+            "isLeading": false
+          },
+          {
+            "candidateId": "samai",
+            "candidateNumber": 2,
+            "name": "สมัย ละเลิศ",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/candidate.png",
+            "color": "#1AA7B1",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 2,
+            "isLeading": false
+          },
+          {
+            "candidateId": "korakasivat",
+            "candidateNumber": 1,
+            "name": "กรกสิวัฒน์ เกษมศรี",
+            "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/candidate.png",
+            "color": "#F76198",
+            "voteCount": 0,
+            "votePercentage": 0,
+            "rank": 1,
+            "isLeading": true
+          }
+        ]
+      },
+      {
+        "areaId": "4",
+        "number": 4,
+        "name": "บางรัก",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "5",
+        "number": 5,
+        "name": "บางเขน",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "6",
+        "number": 6,
+        "name": "บางกะปิ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "7",
+        "number": 7,
+        "name": "ปทุมวัน",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "8",
+        "number": 8,
+        "name": "ป้อมปราบศัตรูพ่าย",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "9",
+        "number": 9,
+        "name": "พระโขนง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "10",
+        "number": 10,
+        "name": "มีนบุรี",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "11",
+        "number": 11,
+        "name": "ลาดกระบัง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "12",
+        "number": 12,
+        "name": "ยานนาวา",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "13",
+        "number": 13,
+        "name": "สัมพันธวงศ์",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "14",
+        "number": 14,
+        "name": "พญาไท",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "15",
+        "number": 15,
+        "name": "ธนบุรี",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "16",
+        "number": 16,
+        "name": "บางกอกใหญ่",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "17",
+        "number": 17,
+        "name": "ห้วยขวาง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "18",
+        "number": 18,
+        "name": "คลองสาน",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "19",
+        "number": 19,
+        "name": "ตลิ่งชัน",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "20",
+        "number": 20,
+        "name": "บางกอกน้อย",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "21",
+        "number": 21,
+        "name": "บางขุนเทียน",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "22",
+        "number": 22,
+        "name": "ภาษีเจริญ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "23",
+        "number": 23,
+        "name": "หนองแขม",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "24",
+        "number": 24,
+        "name": "ราษฎร์บูรณะ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "25",
+        "number": 25,
+        "name": "บางพลัด",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "26",
+        "number": 26,
+        "name": "ดินแดง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "27",
+        "number": 27,
+        "name": "บึงกุ่ม",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "28",
+        "number": 28,
+        "name": "สาทร",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "29",
+        "number": 29,
+        "name": "บางซื่อ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "30",
+        "number": 30,
+        "name": "จตุจักร",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "31",
+        "number": 31,
+        "name": "บางคอแหลม",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "32",
+        "number": 32,
+        "name": "ประเวศ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "33",
+        "number": 33,
+        "name": "คลองเตย",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "34",
+        "number": 34,
+        "name": "สวนหลวง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "35",
+        "number": 35,
+        "name": "จอมทอง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "36",
+        "number": 36,
+        "name": "ดอนเมือง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "37",
+        "number": 37,
+        "name": "ราชเทวี",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "38",
+        "number": 38,
+        "name": "ลาดพร้าว",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "39",
+        "number": 39,
+        "name": "วัฒนา",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "40",
+        "number": 40,
+        "name": "บางแค",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "41",
+        "number": 41,
+        "name": "หลักสี่",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "42",
+        "number": 42,
+        "name": "สายไหม",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "43",
+        "number": 43,
+        "name": "คันนายาว",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "44",
+        "number": 44,
+        "name": "สะพานสูง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "45",
+        "number": 45,
+        "name": "วังทองหลาง",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "46",
+        "number": 46,
+        "name": "คลองสามวา",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "47",
+        "number": 47,
+        "name": "บางนา",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "48",
+        "number": 48,
+        "name": "ทวีวัฒนา",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "49",
+        "number": 49,
+        "name": "ทุ่งครุ",
+        "leadingCandidateId": null,
+        "candidates": []
+      },
+      {
+        "areaId": "50",
+        "number": 50,
+        "name": "บางบอน",
+        "leadingCandidateId": null,
+        "candidates": []
+      }
+    ]
+  }
+}

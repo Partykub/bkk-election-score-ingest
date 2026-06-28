@@ -1,0 +1,362 @@
+{
+  "schemaVersion": "1.0",
+  "resource": "governor-results",
+  "pageMeta": {
+    "electionId": "bkk-governor-2026",
+    "title": "ผลการเลือกตั้งผู้ว่าฯ กรุงเทพมหานคร",
+    "resultStatus": "LIVE_COUNT",
+    "generatedAt": "2026-06-05T11:25:02.000Z"
+  },
+  "summary": {
+    "countedUnits": 0,
+    "totalUnits": 99954,
+    "countedPercentage": 0,
+    "eligibleVoters": 5000000,
+    "voterTurnout": 0,
+    "voterTurnoutPercentage": 0,
+    "validBallots": 0,
+    "invalidBallots": 0,
+    "abstainedBallots": 0,
+    "countedBallots": 0,
+    "countedBallotsPercentage": 0,
+    "validBallotsPercentage": 0,
+    "invalidBallotsPercentage": 0,
+    "abstainedBallotsPercentage": 0,
+    "lastUpdatedAt": "2026-06-05T11:25:02.000Z"
+  },
+  "candidates": [
+    {
+      "candidateId": "chadchart",
+      "candidateNumber": 9,
+      "name": "ชัชชาติ สิทธิพันธุ์",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chadchart/candidate.png",
+      "color": "#75B811",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 9,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chadchart/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "olar",
+      "candidateNumber": 15,
+      "name": "โอฬาร ตั้งตราตระกูล",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/olar/candidate.png",
+      "color": "#051a83",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 15,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/olar/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "chaiwat",
+      "candidateNumber": 10,
+      "name": "ชัยวัฒน์ สถาวรวิจิตร",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chaiwat/candidate.png",
+      "color": "#FF6414",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 10,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chaiwat/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "mallika",
+      "candidateNumber": 14,
+      "name": "มัลลิกา มหาสุข",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/mallika/candidate.png",
+      "color": "#806DB8",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 14,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/mallika/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "anucha",
+      "candidateNumber": 5,
+      "name": "อนุชา บูรพชัยศรี",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/anucha/candidate.png",
+      "color": "#00A1E7",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 5,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/anucha/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "chanthep",
+      "candidateNumber": 12,
+      "name": "ชาญเทพ เสสะเวช",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chanthep/candidate.png",
+      "color": "#E7C000",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 12,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chanthep/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "khomsan",
+      "candidateNumber": 13,
+      "name": "คมสัน พันธุ์วิชาติกุล",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/khomsan/candidate.png",
+      "color": "#3A58E0",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 13,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/khomsan/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "prayoon",
+      "candidateNumber": 11,
+      "name": "ประยูร ครองยศ",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prayoon/candidate.png",
+      "color": "#51CE67",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 11,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/prayoon/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "prateep",
+      "candidateNumber": 4,
+      "name": "ประทีป วัชรโชคเกษม",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/candidate.png",
+      "color": "#7148EF",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 4,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "veerapoj",
+      "candidateNumber": 8,
+      "name": "วีรพจน์ ลือประสิทธิ์สกุล",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/veerapoj/candidate.png",
+      "color": "#1764AE",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 8,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/veerapoj/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "lallana",
+      "candidateNumber": 17,
+      "name": "ลลนา มงคลหัสดินทร์",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/lallana/candidate.png",
+      "color": "#166500",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 17,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/lallana/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "pongsak",
+      "candidateNumber": 3,
+      "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/candidate.png",
+      "color": "#D57AF0",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 3,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "phisan",
+      "candidateNumber": 6,
+      "name": "พิศาล กิตติเยาวมาลย์",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/phisan/candidate.png",
+      "color": "#FF4646",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 6,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/phisan/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "phasapong",
+      "candidateNumber": 7,
+      "name": "ภาสพงศ์ ไชยวิริญะวาณิชย์",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/phasapong/candidate.png",
+      "color": "#D60039",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 7,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/phasapong/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "samai",
+      "candidateNumber": 2,
+      "name": "สมัย ละเลิศ",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/candidate.png",
+      "color": "#1AA7B1",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 2,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "somchai",
+      "candidateNumber": 18,
+      "name": "สมชัย เจริญวรเกียรติ",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/somchai/candidate.png",
+      "color": "#7c200a",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 18,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/somchai/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "srirat",
+      "candidateNumber": 16,
+      "name": "ศรีรัฏฐ์ ช่างเพ็ชร",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/srirat/candidate.png",
+      "color": "#b5089c",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 16,
+      "isLeading": false,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/srirat/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    },
+    {
+      "candidateId": "korakasivat",
+      "candidateNumber": 1,
+      "name": "กรกสิวัฒน์ เกษมศรี",
+      "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/candidate.png",
+      "color": "#F76198",
+      "voteCount": 0,
+      "votePercentage": 0,
+      "rank": 1,
+      "isLeading": true,
+      "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/bg.png",
+      "party": {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
+      }
+    }
+  ],
+  "dataQuality": {
+    "isComplete": false,
+    "isDelayed": false,
+    "warnings": []
+  },
+  "dataInterpretation": {
+    "mode": "latest_snapshot",
+    "description": "Use the latest available value for each field in each district."
+  }
+}

@@ -71,7 +71,8 @@ LINE User
 
 LINE User (กด ยืนยัน / แก้ไข)
   └→ LINE Platform → Caddy → line-relay
-       └→ S3  (write approval manifest)
+       ├→ S3  (write approval manifest หรือ correction draft revision)
+       └→ ข้อความแก้ไข parse ใน intake_server (ดู docs/line-correction-parsing.md)
 ```
 
 ### Results API

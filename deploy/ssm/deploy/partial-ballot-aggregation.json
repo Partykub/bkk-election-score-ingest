@@ -1,0 +1,20 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "deploy results-api partial ballot summary aggregation and re-export",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "TS=partial-ballot-aggregation-20260625",
+      "BUCKET=ch7-static-bkkelection2569",
+      "PREFIX=s3://${BUCKET}/tmp/deploy",
+      "if [ -f /opt/election/hermes/results_api/app.py ]; then cp /opt/election/hermes/results_api/app.py /opt/election/hermes/results_api/app.py.bak-${TS}; fi",
+      "aws s3 cp ${PREFIX}/hermes-results-api-app-${TS}.py /opt/election/hermes/results_api/app.py",
+      "chown ec2-user:ec2-user /opt/election/hermes/results_api/app.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env up -d --no-deps --build results-api'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && for i in $(seq 1 30); do status=$(docker inspect --format \"{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}\" election-results-api-1); echo results-api=$status; if [ \"$status\" = \"healthy\" ] || [ \"$status\" = \"running\" ]; then break; fi; sleep 2; done'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import governor_results_response\nsummary = governor_results_response(use_cache=False).get(\"summary\", {})\nprint({\"countedUnits\": summary.get(\"countedUnits\"), \"validBallots\": summary.get(\"validBallots\"), \"invalidBallots\": summary.get(\"invalidBallots\"), \"abstainedBallots\": summary.get(\"abstainedBallots\"), \"countedBallots\": summary.get(\"countedBallots\")})\nPY'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python - <<\"PY\"\nfrom hermes.supervisor.services.static_results_export import export_static_governor_results\nprint(export_static_governor_results())\nPY'"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+    "Comment":  "inspect prod compose env after deploy",
+    "DocumentName":  "AWS-RunShellScript",
+    "InstanceIds":  [
+                        "i-06edd717a43f763b7"
+                    ],
+    "Parameters":  {
+                       "commands":  [
+                                        "set -e",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 echo ---COMPOSE-RESULTS--- \u0026\u0026 docker compose --env-file .env config | grep -A20 \"results-api:\" | sed -n \"1,40p\" \u0026\u0026 echo ---COMPOSE-LINE--- \u0026\u0026 docker compose --env-file .env config | grep -A20 \"line-relay:\" | sed -n \"1,40p\" \u0026\u0026 echo ---RESULTS-ENV--- \u0026\u0026 docker compose exec -T results-api env | grep -E \"^(GOVERNOR_RESULTS_PREFIX|RESULTS_API_STATIC_RESULTS_PREFIX|RESULTS_API_DEFAULT_DATA_MODE|RESULTS_API_S3_BUCKET|RESULTS_API_S3_PREFIX|ELECTION_S3_PREFIX)=\" \u0026\u0026 echo ---LINE-ENV--- \u0026\u0026 docker compose exec -T line-relay env | grep -E \"^(GOVERNOR_RESULTS_PREFIX|STATIC_RESULTS_PREFIX|STATIC_RESULTS_S3_BUCKET|RESULTS_API_INTERNAL_BASE_URL|RESULTS_API_DEFAULT_DATA_MODE)=\" \u0026\u0026 echo ---RESULTS-SETTINGS--- \u0026\u0026 docker compose exec -T results-api python - \u003c\u003c\"PY\"\nfrom hermes.results_api.app import settings\nprint({\"static_results_prefix\": settings.static_results_prefix, \"default_data_mode\": settings.default_data_mode, \"bucket\": settings.bucket_name, \"prefix\": settings.prefix})\nPY\u0027"
+                                    ]
+                   }
+}

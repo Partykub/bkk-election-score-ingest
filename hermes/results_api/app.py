@@ -3,18 +3,52 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from threading import Lock
-from time import monotonic
+from datetime import datetime, timedelta, timezone
+from threading import Event, Lock, Thread
+from time import monotonic, sleep
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+
+from hermes.governor_results.http_fetch import fetch_json_http
+from hermes.governor_results.sorkor_adapter import (
+    build_sorkor_districts_from_external_payload,
+    build_sorkor_summary_from_external_payload,
+)
+from hermes.governor_results.public_source import (
+    BKK_TARGET,
+    DEFAULT_PUBLIC_SOURCE,
+    LINE_TARGET,
+    LIVE_TARGET,
+    PUBLIC_EXPORT_FILES,
+    PublicSourceNotFoundError,
+    SORKOR_EXPORT_FILES,
+    effective_active_public_source_config as build_active_public_source_view,
+    normalize_public_source,
+    parent_prefix_from_static_prefix,
+    prefix_for_target,
+    promote_public_results,
+    read_active_public_source,
+    optional_promote_files_for_source,
+    source_target_for_public_source,
+    write_active_public_source,
+)
+from hermes.results_api.governor_mock_ticker import (
+    DEFAULT_BMC_MOCK_S3_KEY,
+    DEFAULT_MOCK_S3_KEY,
+    MIN_MOCK_INTERVAL_SECONDS,
+    build_dual_mock_reset_snapshots,
+    build_dual_mock_tick_snapshots,
+    initial_mock_state,
+    load_bmc_final_fixture,
+    load_final_fixture,
+    validate_mock_fetch_intervals,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +74,12 @@ class Settings:
     default_data_mode: str
     static_results_prefix: str
     enable_static_results_fallback: bool
+    external_governor_results_url: str | None
+    external_governor_results_timeout_seconds: float
+    external_bmc_results_url: str | None
+    external_bmc_results_timeout_seconds: float
+    sorkor_election_id: str
+    sorkor_election_title: str
 
 
 def load_settings() -> Settings:
@@ -122,6 +162,30 @@ def load_settings() -> Settings:
             "RESULTS_API_ENABLE_STATIC_FALLBACK",
             "true",
         ).strip().lower() not in {"0", "false", "no", "off"},
+        external_governor_results_url=(
+            os.environ.get("RESULTS_API_EXTERNAL_GOVERNOR_RESULTS_URL", "").strip()
+            or None
+        ),
+        external_governor_results_timeout_seconds=max(
+            0.1,
+            float(os.environ.get("RESULTS_API_EXTERNAL_GOVERNOR_RESULTS_TIMEOUT_SECONDS", "10")),
+        ),
+        external_bmc_results_url=(
+            os.environ.get("RESULTS_API_EXTERNAL_BMC_RESULTS_URL", "").strip()
+            or None
+        ),
+        external_bmc_results_timeout_seconds=max(
+            0.1,
+            float(os.environ.get("RESULTS_API_EXTERNAL_BMC_RESULTS_TIMEOUT_SECONDS", "10")),
+        ),
+        sorkor_election_id=os.environ.get(
+            "RESULTS_API_SORKOR_ELECTION_ID",
+            "bkk-sorkor-2026",
+        ).strip(),
+        sorkor_election_title=os.environ.get(
+            "RESULTS_API_SORKOR_ELECTION_TITLE",
+            "ผลการเลือก ส.ก. กรุงเทพมหานคร",
+        ).strip(),
     )
 
 
@@ -152,9 +216,7 @@ def read_json_source(*, source: str, timeout_seconds: float, s3_client: Any | No
         response = client.get_object(Bucket=bucket, Key=key)
         return json.loads(response["Body"].read().decode("utf-8"))
 
-    request = Request(source, headers={"Accept": "application/json", "User-Agent": "election-results-api/1.0"})
-    with urlopen(request, timeout=timeout_seconds) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return fetch_json_http(source, timeout_seconds=timeout_seconds)
 
 
 def normalize_election_area_districts(payload: Any) -> list[dict[str, Any]]:
@@ -249,8 +311,46 @@ def percentage_of(value: int | None, total: int | None) -> float | None:
     return round(value / total * 100, 2)
 
 
+def counted_ballots_total(
+    valid_ballots: int | None,
+    invalid_ballots: int | None,
+    abstained_ballots: int | None,
+) -> int | None:
+    if valid_ballots is None or invalid_ballots is None or abstained_ballots is None:
+        return None
+    return valid_ballots + invalid_ballots + abstained_ballots
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def normalize_text_key(value: Any) -> str | None:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return None
+    return text.casefold()
+
+
+def parse_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def result_status_from_external_type(raw_type: Any) -> str:
+    normalized = str(raw_type or "").strip().upper()
+    if normalized == "FINAL":
+        return "FINAL"
+    return "LIVE_COUNT"
 
 
 def parse_iso_datetime(value: Any) -> datetime | None:
@@ -645,29 +745,23 @@ def build_governor_results(
         "invalidBallots": "invalid_ballots",
         "abstainedBallots": "abstained_ballots",
     }
-    partial_sum_fields = {"eligibleVoters", "voterTurnout"}
     aggregates: dict[str, int | None] = {}
     warnings = []
     if total_units is None:
         warnings.append("totalUnits is unavailable because district master data could not be loaded.")
     for response_field, source_field in aggregate_fields.items():
         values = []
-        has_missing_values = False
         for result in approved_results:
             value = result.get(source_field)
             if value is None:
-                has_missing_values = True
                 continue
             try:
                 values.append(int(value))
             except (TypeError, ValueError):
-                has_missing_values = True
-        if response_field in partial_sum_fields:
-            aggregates[response_field] = sum(values) if values else None
-        else:
-            aggregates[response_field] = sum(values) if values and not has_missing_values and len(values) == counted_units else None
+                continue
+        aggregates[response_field] = sum(values) if values else None
         if counted_units and aggregates[response_field] is None:
-            warnings.append(f"{response_field} is unavailable or incomplete in approved results.")
+            warnings.append(f"{response_field} is unavailable in approved results.")
     for candidate in candidates:
         missing_metadata = [
             field
@@ -689,6 +783,7 @@ def build_governor_results(
     valid_ballots = aggregates["validBallots"]
     invalid_ballots = aggregates["invalidBallots"]
     abstained_ballots = aggregates["abstainedBallots"]
+    counted_ballots = counted_ballots_total(valid_ballots, invalid_ballots, abstained_ballots)
 
     generated_timestamp = generated_at or utc_now_iso()
     is_delayed = None
@@ -719,6 +814,8 @@ def build_governor_results(
             "validBallots": valid_ballots,
             "invalidBallots": invalid_ballots,
             "abstainedBallots": abstained_ballots,
+            "countedBallots": counted_ballots,
+            "countedBallotsPercentage": percentage_of(counted_ballots, voter_turnout),
             "validBallotsPercentage": percentage_of(valid_ballots, voter_turnout),
             "invalidBallotsPercentage": percentage_of(invalid_ballots, voter_turnout),
             "abstainedBallotsPercentage": percentage_of(abstained_ballots, voter_turnout),
@@ -779,6 +876,8 @@ def build_district_results(
                     "name": metadata.get("name") or score.get("candidate_name"),
                     "candidateSrc": metadata.get("candidateSrc"),
                     "color": metadata.get("color"),
+                    "backgroundSrc": metadata.get("backgroundSrc"),
+                    "party": candidate_party_payload(metadata),
                     "voteCount": vote_count,
                 }
             )
@@ -793,250 +892,250 @@ def build_district_results(
             candidate["rank"] = rank
             candidate["isLeading"] = rank == 1
 
-        constituencies.append(
+        eligible_voters = result.get("eligible_voters") if result else None
+        voter_turnout = result.get("voter_turnout") if result else None
+        valid_ballots = result.get("valid_ballots") if result else None
+        invalid_ballots = result.get("invalid_ballots") if result else None
+        abstained_ballots = result.get("abstained_ballots") if result else None
+        counted_ballots = counted_ballots_total(valid_ballots, invalid_ballots, abstained_ballots)
+        last_updated_at = (
+            str(result.get("approved_at") or result.get("updated_at") or "").strip()
+            if result
+            else None
+        ) or None
+
+        constituency = {
+            "areaId": str(district.get("electionAreaId") or district.get("id")),
+            "number": district.get("id"),
+            "name": district.get("districtNameTh"),
+            "leadingCandidateId": scores[0].get("candidateId") if scores else None,
+        }
+        optional_summary_fields = without_nulls(
             {
-                "areaId": area_id,
-                "number": district.get("id"),
-                "name": district.get("districtNameTh"),
-                "leadingCandidateId": scores[0].get("candidateId") if scores else None,
-                "candidates": scores,
+                "countedPercentage": 100.0 if result else None,
+                "sumaryVoteCount": total_votes if result else None,
+                "eligibleVoters": eligible_voters,
+                "voterTurnout": voter_turnout,
+                "voterTurnoutPercentage": percentage_of(voter_turnout, eligible_voters),
+                "validBallots": valid_ballots,
+                "invalidBallots": invalid_ballots,
+                "abstainedBallots": abstained_ballots,
+                "countedBallots": counted_ballots,
+                "countedBallotsPercentage": percentage_of(counted_ballots, voter_turnout),
+                "lastUpdatedAt": last_updated_at,
             }
         )
+        constituency.update(optional_summary_fields)
+        constituency["candidates"] = scores
+        constituencies.append(constituency)
 
     return {
         "schemaVersion": "1.0",
         "resource": "constituency-bangkok",
         "generatedAt": generated_at or utc_now_iso(),
-        "data": {"constituencies": constituencies},
+        "constituencies": constituencies,
     }
 
 
-MONITOR_REQUIRED_RESULT_FIELDS = (
-    "candidate_scores",
-    "eligible_voters",
-    "voter_turnout",
-    "valid_ballots",
-    "invalid_ballots",
-    "abstained_ballots",
-)
-
-
-def monitor_missing_fields(result: dict[str, Any] | None) -> list[str]:
-    if not result:
-        return list(MONITOR_REQUIRED_RESULT_FIELDS)
-
-    missing = []
-    for field in MONITOR_REQUIRED_RESULT_FIELDS:
-        value = result.get(field)
-        if field == "candidate_scores":
-            if not isinstance(value, list) or not value:
-                missing.append(field)
-        elif value is None:
-            missing.append(field)
-    return missing
-
-
-def monitor_validation_warnings(result: dict[str, Any] | None) -> list[str]:
-    if not result:
-        return []
-
-    warnings = []
-    scores = result.get("candidate_scores")
-    if isinstance(scores, list):
-        for index, score in enumerate(scores, start=1):
-            if not isinstance(score, dict):
-                warnings.append(f"candidate_scores[{index}] is not an object.")
-                continue
-            if score.get("candidate_number") is None:
-                warnings.append(f"candidate_scores[{index}].candidate_number is missing.")
-            if score.get("score") is None:
-                warnings.append(f"candidate_scores[{index}].score is missing.")
-            else:
-                try:
-                    if int(score["score"]) < 0:
-                        warnings.append(f"candidate_scores[{index}].score is negative.")
-                except (TypeError, ValueError):
-                    warnings.append(f"candidate_scores[{index}].score is not a valid integer.")
-
-    try:
-        voter_turnout = int(result["voter_turnout"]) if result.get("voter_turnout") is not None else None
-        valid_ballots = int(result["valid_ballots"]) if result.get("valid_ballots") is not None else None
-        invalid_ballots = int(result["invalid_ballots"]) if result.get("invalid_ballots") is not None else None
-        abstained_ballots = int(result["abstained_ballots"]) if result.get("abstained_ballots") is not None else None
-    except (TypeError, ValueError):
-        warnings.append("Turnout or ballot fields contain a non-integer value.")
-        voter_turnout = valid_ballots = invalid_ballots = abstained_ballots = None
-
-    if all(value is not None for value in (voter_turnout, valid_ballots, invalid_ballots, abstained_ballots)):
-        ballot_total = valid_ballots + invalid_ballots + abstained_ballots
-        if voter_turnout != ballot_total:
-            warnings.append("voter_turnout does not equal valid_ballots + invalid_ballots + abstained_ballots.")
-
-    try:
-        eligible_voters = int(result["eligible_voters"]) if result.get("eligible_voters") is not None else None
-    except (TypeError, ValueError):
-        warnings.append("eligible_voters is not a valid integer.")
-        eligible_voters = None
-    if eligible_voters is not None and voter_turnout is not None and voter_turnout > eligible_voters:
-        warnings.append("voter_turnout exceeds eligible_voters.")
-
-    return warnings
-
-
-def latest_submission_timestamp(index: dict[str, Any] | None) -> str | None:
-    if not index:
-        return None
-    timestamps = [
-        str(item.get("submitted_at") or "").strip()
-        for item in index.get("submissions", [])
-        if isinstance(item, dict) and item.get("submitted_at")
-    ]
-    if index.get("updated_at"):
-        timestamps.append(str(index["updated_at"]))
-    return max(timestamps) if timestamps else None
-
-
-def leading_candidate_id(
-    result: dict[str, Any] | None,
-    candidate_catalog: dict[int, dict[str, Any]] | None,
-) -> str | None:
-    if not result:
-        return None
-    scores = []
-    for score in result.get("candidate_scores", []):
-        try:
-            candidate_number = int(score.get("candidate_number"))
-            vote_count = int(score.get("score"))
-        except (AttributeError, TypeError, ValueError):
-            continue
-        scores.append((vote_count, candidate_number))
-    if not scores:
-        return None
-    _, candidate_number = sorted(scores, key=lambda item: (-item[0], item[1]))[0]
-    metadata = (candidate_catalog or {}).get(candidate_number, {})
-    return metadata.get("candidateId") or str(candidate_number)
-
-
-def build_monitor_districts(
+def build_external_governor_candidates(
     *,
-    district_catalog: dict[str, dict[str, Any]],
-    area_indexes: dict[str, dict[str, Any]],
-    approved_results_by_area: dict[str, list[dict[str, Any]]],
-    raw_approved_results_by_area: dict[str, list[dict[str, Any]]] | None = None,
+    raw_results: list[dict[str, Any]],
+    candidate_catalog: dict[int, dict[str, Any]],
+    total_votes: int | None,
+    warnings: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        candidate_number = parse_int(item.get("candidateId"))
+        vote_count = parse_int(item.get("count"))
+        if candidate_number is None or vote_count is None:
+            continue
+        metadata = candidate_catalog.get(candidate_number, {})
+        candidate = {
+            "candidateId": metadata.get("candidateId"),
+            "candidateNumber": candidate_number,
+            "name": metadata.get("name"),
+            "candidateSrc": metadata.get("candidateSrc"),
+            "color": metadata.get("color"),
+            "voteCount": vote_count,
+            "votePercentage": round(vote_count / total_votes * 100, 2) if total_votes else 0,
+            "backgroundSrc": metadata.get("backgroundSrc"),
+            "party": candidate_party_payload(metadata),
+        }
+        if warnings is not None:
+            missing_metadata = [field for field in ("candidateId", "name", "color") if candidate[field] is None]
+            if missing_metadata:
+                warnings.append(
+                    f"Candidate {candidate_number} is missing metadata: {', '.join(missing_metadata)}."
+                )
+        candidates.append(candidate)
+    candidates.sort(key=lambda item: (-item["voteCount"], item["candidateNumber"]))
+    for rank, candidate in enumerate(candidates, start=1):
+        candidate["rank"] = rank
+        candidate["isLeading"] = rank == 1
+    return candidates
+
+
+def build_governor_results_from_external_payload(
+    *,
+    raw_payload: dict[str, Any],
     candidate_catalog: dict[int, dict[str, Any]] | None = None,
     election_id: str = "bkk-governor-2026",
+    title: str = "ผลการเลือกตั้งผู้ว่าฯ กรุงเทพมหานคร",
     delayed_after_minutes: int = 30,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
+    total = raw_payload.get("total") if isinstance(raw_payload.get("total"), dict) else {}
+    total_polling_units = total.get("pollingUnits") if isinstance(total.get("pollingUnits"), dict) else {}
+    valid_ballots = parse_int(total.get("goodVote"))
+    invalid_ballots = parse_int(total.get("badVotes"))
+    abstained_ballots = parse_int(total.get("noVotes"))
+    voter_turnout = parse_int(total.get("totalVotes"))
+    eligible_voters = parse_int(total.get("eligiblePopulation"))
+    counted_ballots = counted_ballots_total(valid_ballots, invalid_ballots, abstained_ballots)
+    counted_units = parse_int(total_polling_units.get("reported"))
+    total_units = parse_int(total_polling_units.get("total"))
+    last_updated_at = str(raw_payload.get("lastUpdatedAt") or "").strip() or None
+    warnings: list[str] = []
+    candidates = build_external_governor_candidates(
+        raw_results=total.get("result") if isinstance(total.get("result"), list) else [],
+        candidate_catalog=candidate_catalog or {},
+        total_votes=valid_ballots,
+        warnings=warnings,
+    )
     generated_timestamp = generated_at or utc_now_iso()
-    generated_datetime = parse_iso_datetime(generated_timestamp)
-    districts = [
-        district
-        for district in district_catalog.values()
-        if district.get("provinceCode") == 10
-    ]
-    districts.sort(key=lambda district: int(district.get("id") or 0))
+    is_delayed = None
+    if last_updated_at:
+        try:
+            last_updated = datetime.fromisoformat(last_updated_at.replace("Z", "+00:00"))
+            generated_datetime = datetime.fromisoformat(generated_timestamp.replace("Z", "+00:00"))
+            is_delayed = (generated_datetime - last_updated).total_seconds() > delayed_after_minutes * 60
+        except ValueError:
+            warnings.append("lastUpdatedAt is not a valid ISO 8601 timestamp.")
 
-    monitor_districts = []
-    for district in districts:
-        area_id = str(district.get("id"))
-        index = area_indexes.get(area_id) or {}
-        approved_results = approved_results_by_area.get(area_id) or []
-        raw_approved_results = (raw_approved_results_by_area or {}).get(area_id) or approved_results
-        latest_result = approved_results[0] if approved_results else None
-        latest_raw_result = raw_approved_results[0] if raw_approved_results else latest_result
-        missing_fields = monitor_missing_fields(latest_result) if latest_result else []
-        warnings = monitor_validation_warnings(latest_result)
-        submission_count = int(index.get("submission_count") or len(index.get("submissions", []) or []))
-        approved_submission_count = len(raw_approved_results)
-        latest_approved_at = latest_raw_result.get("approved_at") if latest_raw_result else None
-        latest_approved_datetime = parse_iso_datetime(latest_approved_at)
-        is_delayed = (
-            bool(generated_datetime and latest_approved_datetime)
-            and (generated_datetime - latest_approved_datetime).total_seconds() > delayed_after_minutes * 60
-        )
-
-        if submission_count == 0 and approved_submission_count == 0:
-            status = "no_data"
-        elif approved_submission_count == 0:
-            status = "pending"
-        elif missing_fields:
-            status = "missing_fields"
-        elif warnings:
-            status = "conflict"
-        elif is_delayed:
-            status = "delayed"
-        else:
-            status = "complete"
-
-        monitor_districts.append(
-            without_nulls(
-                {
-                    "areaId": area_id,
-                    "districtCode": district.get("districtCode"),
-                    "districtNameTh": district.get("districtNameTh"),
-                    "districtNameEn": district.get("districtNameEn"),
-                    "submissionCount": submission_count,
-                    "approvedSubmissionCount": approved_submission_count,
-                    "latestSubmittedAt": latest_submission_timestamp(index),
-                    "latestApprovedAt": latest_approved_at,
-                    "status": status,
-                    "missingFields": missing_fields,
-                    "warnings": warnings,
-                    "leadingCandidateId": leading_candidate_id(latest_result, candidate_catalog),
-                }
-            )
-        )
+    if voter_turnout is not None and counted_ballots is not None and counted_ballots != voter_turnout:
+        warnings.append("counted ballots do not equal voter turnout in external payload.")
+    if counted_units is not None and total_units is not None and counted_units > total_units:
+        warnings.append("reported polling units exceed total polling units in external payload.")
 
     return {
         "schemaVersion": "1.0",
-        "resource": "election-monitor-districts",
-        "generatedAt": generated_timestamp,
-        "electionId": election_id,
-        "districts": monitor_districts,
+        "resource": "governor-results",
+        "pageMeta": {
+            "electionId": election_id,
+            "title": title,
+            "resultStatus": result_status_from_external_type(raw_payload.get("type")),
+            "generatedAt": generated_timestamp,
+        },
+        "summary": {
+            "countedUnits": counted_units,
+            "totalUnits": total_units,
+            "countedPercentage": parse_float(total.get("progress")),
+            "eligibleVoters": eligible_voters,
+            "voterTurnout": voter_turnout,
+            "voterTurnoutPercentage": percentage_of(voter_turnout, eligible_voters),
+            "validBallots": valid_ballots,
+            "invalidBallots": invalid_ballots,
+            "abstainedBallots": abstained_ballots,
+            "countedBallots": counted_ballots,
+            "countedBallotsPercentage": percentage_of(counted_ballots, voter_turnout),
+            "validBallotsPercentage": percentage_of(valid_ballots, voter_turnout),
+            "invalidBallotsPercentage": percentage_of(invalid_ballots, voter_turnout),
+            "abstainedBallotsPercentage": percentage_of(abstained_ballots, voter_turnout),
+            "lastUpdatedAt": last_updated_at,
+        },
+        "candidates": candidates,
+        "dataQuality": {
+            "isComplete": counted_units >= total_units if counted_units is not None and total_units is not None else None,
+            "isDelayed": is_delayed,
+            "warnings": warnings,
+        },
+        "dataInterpretation": {
+            "mode": "external_snapshot",
+            "description": "Use the latest external snapshot provided by the upstream endpoint.",
+        },
     }
 
 
-def build_monitor_overview(
+def build_district_results_from_external_payload(
     *,
-    monitor_districts: list[dict[str, Any]],
-    election_id: str,
+    raw_payload: dict[str, Any],
+    candidate_catalog: dict[int, dict[str, Any]],
+    district_catalog: dict[str, dict[str, Any]],
     generated_at: str | None = None,
 ) -> dict[str, Any]:
-    generated_timestamp = generated_at or utc_now_iso()
-    total_districts = len(monitor_districts)
-    districts_with_data = sum(1 for district in monitor_districts if district.get("submissionCount", 0) > 0)
-    complete_districts = sum(1 for district in monitor_districts if district.get("status") == "complete")
-    delayed_districts = sum(1 for district in monitor_districts if district.get("status") == "delayed")
-    conflict_districts = sum(1 for district in monitor_districts if district.get("status") == "conflict")
-    latest_approved_values = [
-        str(district.get("latestApprovedAt"))
-        for district in monitor_districts
-        if district.get("latestApprovedAt")
-    ]
-    warnings = []
-    if total_districts and complete_districts < total_districts:
-        warnings.append("Some districts are incomplete or require operator review.")
+    districts_by_name: dict[str, dict[str, Any]] = {}
+    for district in district_catalog.values():
+        if district.get("provinceCode") != 10:
+            continue
+        key = normalize_text_key(district.get("districtNameTh"))
+        if key and key not in districts_by_name:
+            districts_by_name[key] = district
+
+    raw_districts_by_name: dict[str, dict[str, Any]] = {}
+    for raw_district in raw_payload.get("districts", []):
+        if not isinstance(raw_district, dict):
+            continue
+        key = normalize_text_key(raw_district.get("name"))
+        if key:
+            raw_districts_by_name[key] = raw_district
+
+    unique_districts: dict[str, dict[str, Any]] = {}
+    for district in district_catalog.values():
+        district_id = str(district.get("id") or "")
+        if not district_id or district_id in unique_districts:
+            continue
+        unique_districts[district_id] = district
+    bangkok_districts = [district for district in unique_districts.values() if district.get("provinceCode") == 10]
+    bangkok_districts.sort(key=lambda district: int(district.get("id") or 0))
+
+    constituencies: list[dict[str, Any]] = []
+    last_updated_at = str(raw_payload.get("lastUpdatedAt") or "").strip() or None
+    for district in bangkok_districts:
+        raw_district = raw_districts_by_name.get(normalize_text_key(district.get("districtNameTh")))
+        voting = raw_district.get("voting") if isinstance(raw_district, dict) and isinstance(raw_district.get("voting"), dict) else {}
+        valid_ballots = parse_int(voting.get("goodVote"))
+        invalid_ballots = parse_int(voting.get("badVotes"))
+        abstained_ballots = parse_int(voting.get("noVotes"))
+        voter_turnout = parse_int(voting.get("totalVotes"))
+        counted_ballots = counted_ballots_total(valid_ballots, invalid_ballots, abstained_ballots)
+        candidates = build_external_governor_candidates(
+            raw_results=voting.get("result") if isinstance(voting.get("result"), list) else [],
+            candidate_catalog=candidate_catalog,
+            total_votes=valid_ballots,
+        )
+        constituency = {
+            "areaId": str(district.get("electionAreaId") or district.get("id")),
+            "number": district.get("id"),
+            "name": district.get("districtNameTh"),
+            "leadingCandidateId": candidates[0].get("candidateId") if candidates else None,
+        }
+        optional_summary_fields = without_nulls(
+            {
+                "countedPercentage": parse_float(voting.get("progress")),
+                "sumaryVoteCount": sum(candidate.get("voteCount", 0) for candidate in candidates) if candidates else None,
+                "eligibleVoters": parse_int(voting.get("eligiblePopulation")),
+                "voterTurnout": voter_turnout,
+                "voterTurnoutPercentage": percentage_of(voter_turnout, parse_int(voting.get("eligiblePopulation"))),
+                "validBallots": valid_ballots,
+                "invalidBallots": invalid_ballots,
+                "abstainedBallots": abstained_ballots,
+                "countedBallots": counted_ballots,
+                "countedBallotsPercentage": percentage_of(counted_ballots, voter_turnout),
+                "lastUpdatedAt": last_updated_at,
+            }
+        )
+        constituency.update(optional_summary_fields)
+        constituency["candidates"] = candidates
+        constituencies.append(constituency)
 
     return {
         "schemaVersion": "1.0",
-        "resource": "election-monitor",
-        "generatedAt": generated_timestamp,
-        "electionId": election_id,
-        "overview": {
-            "totalDistricts": total_districts,
-            "districtsWithData": districts_with_data,
-            "districtsWithoutData": total_districts - districts_with_data,
-            "completeDistricts": complete_districts,
-            "incompleteDistricts": total_districts - complete_districts,
-            "delayedDistricts": delayed_districts,
-            "conflictDistricts": conflict_districts,
-            "latestApprovedAt": max(latest_approved_values) if latest_approved_values else None,
-        },
-        "dataQuality": {
-            "isComplete": total_districts > 0 and complete_districts == total_districts,
-            "warnings": warnings,
-        },
+        "resource": "constituency-bangkok",
+        "generatedAt": generated_at or utc_now_iso(),
+        "constituencies": constituencies,
     }
 
 
@@ -1066,31 +1165,29 @@ app.add_middleware(
     allow_methods=["GET", "PATCH", "POST", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
-_monitor_cache_lock = Lock()
-_monitor_cache_at = 0.0
-_monitor_cache_payload: dict[str, Any] | None = None
-_monitor_cache_seconds = 10.0
+
+
+@app.middleware("http")
+async def enforce_utf8_json_charset(request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("application/json") and "charset=" not in content_type.lower():
+        response.headers["content-type"] = f"{content_type}; charset=utf-8"
+    return response
+
+
 _governor_results_cache_lock = Lock()
 _governor_results_cache_at = 0.0
 _governor_results_cache_payload: dict[str, Any] | None = None
 _governor_results_cache_seconds = 10.0
-PAGE_META_OVERRIDE_KEY = "monitor/overrides/page-meta.json"
-DATA_MODE_OVERRIDE_KEY = "monitor/overrides/data-mode.json"
-DISTRICT_SUMMARY_OVERRIDE_PREFIX = "monitor/overrides/districts"
-DISTRICT_ROUND_OVERRIDE_PREFIX = "monitor/overrides/district-rounds"
-MONITOR_AUDIT_PREFIX = "monitor/audit"
-ALLOWED_RESULT_STATUSES = {"LIVE_COUNT", "OFFICIAL", "PAUSED", "DELAYED"}
+_monitor_fetch_execution_lock = Lock()
+_monitor_scheduler_started = False
+_monitor_scheduler_start_lock = Lock()
+_monitor_scheduler_stop_event = Event()
 DATA_INTERPRETATION_MODES = {
-    "latest_snapshot": "Use only the latest approved report per district.",
+    "latest_snapshot": "Use the latest available value for each field in each district.",
     "incremental_delta": "Sum every approved report in each district as incremental deltas.",
 }
-SUMMARY_OVERRIDE_FIELDS = (
-    "eligibleVoters",
-    "voterTurnout",
-    "validBallots",
-    "invalidBallots",
-    "abstainedBallots",
-)
 SUMMARY_FIELD_TO_RESULT_FIELD = {
     "eligibleVoters": "eligible_voters",
     "voterTurnout": "voter_turnout",
@@ -1098,12 +1195,22 @@ SUMMARY_FIELD_TO_RESULT_FIELD = {
     "invalidBallots": "invalid_ballots",
     "abstainedBallots": "abstained_ballots",
 }
+MONITOR_EXTERNAL_SOURCE_KEY = "monitor/config/external-governor-results.json"
+MONITOR_EXTERNAL_BMC_SOURCE_KEY = "monitor/config/external-bmc-results.json"
+MONITOR_SCHEDULE_KEY = "monitor/config/governor-results-schedule.json"
+MONITOR_FETCH_LOG_KEY = "monitor/logs/governor-results-fetch-log.json"
+MONITOR_FETCH_LOG_LIMIT = 50
+MONITOR_SCHEDULE_ACTIONS = {"start", "stop", "resume"}
+MONITOR_MOCK_KEY = "monitor/config/governor-results-mock.json"
+MONITOR_MOCK_ACTIONS = {"start", "stop", "reset"}
+_monitor_mock_execution_lock = Lock()
+_monitor_mock_scheduler_started = False
+_monitor_mock_scheduler_start_lock = Lock()
+_monitor_mock_scheduler_stop_event = Event()
 
 
 def invalidate_result_caches() -> None:
-    global _monitor_cache_at, _monitor_cache_payload, _governor_results_cache_at, _governor_results_cache_payload
-    _monitor_cache_payload = None
-    _monitor_cache_at = 0.0
+    global _governor_results_cache_at, _governor_results_cache_payload
     _governor_results_cache_payload = None
     _governor_results_cache_at = 0.0
 
@@ -1111,146 +1218,1111 @@ def invalidate_result_caches() -> None:
 def monitor_storage_error(exc: Exception) -> HTTPException:
     return HTTPException(
         status_code=502,
-        detail=f"S3 data is unavailable. Check AWS credentials/session and RESULTS_API_S3_BUCKET. {exc}",
+        detail=f"Unable to read or write monitor configuration in S3. {exc}",
     )
 
 
-def audit_timestamp() -> tuple[str, str, str, str]:
-    now = datetime.now(timezone.utc)
-    created_at = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    return created_at, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d")
+def read_monitor_external_source_override() -> dict[str, Any]:
+    return store.read_json(MONITOR_EXTERNAL_SOURCE_KEY) or {}
 
 
-def read_page_meta_override() -> dict[str, Any]:
-    return store.read_json(PAGE_META_OVERRIDE_KEY) or {}
+def safe_read_monitor_external_source_override() -> dict[str, Any]:
+    try:
+        return read_monitor_external_source_override()
+    except (BotoCoreError, ClientError):
+        return {}
 
 
-def read_data_mode_override() -> dict[str, Any]:
-    return store.read_json(DATA_MODE_OVERRIDE_KEY) or {}
+def read_monitor_external_bmc_source_override() -> dict[str, Any]:
+    return store.read_json(MONITOR_EXTERNAL_BMC_SOURCE_KEY) or {}
+
+
+def safe_read_monitor_external_bmc_source_override() -> dict[str, Any]:
+    try:
+        return read_monitor_external_bmc_source_override()
+    except (BotoCoreError, ClientError):
+        return {}
+
+
+def read_monitor_schedule_override() -> dict[str, Any]:
+    return store.read_json(MONITOR_SCHEDULE_KEY) or {}
+
+
+def safe_read_monitor_schedule_override() -> dict[str, Any]:
+    try:
+        return read_monitor_schedule_override()
+    except (BotoCoreError, ClientError):
+        return {}
+
+
+def read_monitor_fetch_log() -> dict[str, Any]:
+    return store.read_json(MONITOR_FETCH_LOG_KEY) or {}
+
+
+def safe_read_monitor_fetch_log() -> dict[str, Any]:
+    try:
+        return read_monitor_fetch_log()
+    except (BotoCoreError, ClientError):
+        return {}
+
+
+def read_monitor_mock_override() -> dict[str, Any]:
+    return store.read_json(MONITOR_MOCK_KEY) or {}
+
+
+def safe_read_monitor_mock_override() -> dict[str, Any]:
+    try:
+        return read_monitor_mock_override()
+    except (BotoCoreError, ClientError):
+        return {}
+
+
+def write_monitor_mock(payload: dict[str, Any]) -> None:
+    store.write_json(MONITOR_MOCK_KEY, payload)
+
+
+def mock_target_key_from_url(url: str | None, *, default_key: str = DEFAULT_MOCK_S3_KEY) -> str:
+    if not str(url or "").strip():
+        return default_key
+    parsed = urlparse(str(url).strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if "api-data" in parts:
+        index = parts.index("api-data")
+        return "/".join(parts[index:])
+    return default_key
+
+
+def mock_bmc_target_key_from_url(url: str | None) -> str:
+    return mock_target_key_from_url(url, default_key=DEFAULT_BMC_MOCK_S3_KEY)
+
+
+def effective_monitor_mock_config() -> dict[str, Any]:
+    saved = safe_read_monitor_mock_override()
+    external = effective_external_governor_results_config()
+    bmc_external = effective_external_bmc_results_config()
+    target_key = str(saved.get("targetKey") or mock_target_key_from_url(external.get("url")))
+    bmc_target_key = str(
+        saved.get("bmcTargetKey") or mock_bmc_target_key_from_url(bmc_external.get("url"))
+    )
+    enabled = bool(saved.get("enabled"))
+    interval_seconds = int(saved.get("intervalSeconds") or MIN_MOCK_INTERVAL_SECONDS)
+    next_run_at = str(saved.get("nextRunAt") or "").strip() or None
+    remaining_seconds = monitor_schedule_remaining_seconds(enabled=enabled, next_run_at=next_run_at)
+    return {
+        "enabled": enabled,
+        "intervalSeconds": interval_seconds,
+        "updatedAt": saved.get("updatedAt"),
+        "nextRunAt": next_run_at,
+        "remainingSeconds": remaining_seconds,
+        "lastTickAt": saved.get("lastTickAt"),
+        "openedCount": int(saved.get("openedCount") or 0),
+        "totalDistricts": int(saved.get("totalDistricts") or 0),
+        "lastProgress": saved.get("lastProgress"),
+        "lastReportedPollingUnits": saved.get("lastReportedPollingUnits"),
+        "completedCycles": int(saved.get("completedCycles") or 0),
+        "targetKey": target_key,
+        "bmcTargetKey": bmc_target_key,
+        "savedConfig": saved,
+    }
+
+
+def parse_monitor_mock_interval_seconds(payload: dict[str, Any], *, existing: dict[str, Any]) -> int:
+    if "mockIntervalSeconds" in payload:
+        try:
+            interval_seconds = int(payload.get("mockIntervalSeconds"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="mockIntervalSeconds must be an integer.") from exc
+    else:
+        interval_seconds = int(existing.get("intervalSeconds") or MIN_MOCK_INTERVAL_SECONDS)
+    if interval_seconds < MIN_MOCK_INTERVAL_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"mockIntervalSeconds must be at least {MIN_MOCK_INTERVAL_SECONDS}.",
+        )
+    return interval_seconds
+
+
+def assert_monitor_mock_fetch_timing(*, mock_interval_seconds: int, fetch_interval_seconds: int) -> None:
+    try:
+        validate_mock_fetch_intervals(
+            mock_interval_seconds=mock_interval_seconds,
+            fetch_interval_seconds=fetch_interval_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def build_monitor_mock_update(
+    payload: dict[str, Any],
+    *,
+    schedule_interval_seconds: int,
+    schedule_enabled: bool,
+) -> dict[str, Any]:
+    existing = safe_read_monitor_mock_override()
+    interval_seconds = parse_monitor_mock_interval_seconds(payload, existing=existing)
+    action = str(payload.get("mockAction") or "").strip().lower()
+    if action and action not in MONITOR_MOCK_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="mockAction must be one of: start, stop, reset.",
+        )
+    external = effective_external_governor_results_config()
+    bmc_external = effective_external_bmc_results_config()
+    target_key = mock_target_key_from_url(str(payload.get("mockTargetUrl") or external.get("url") or ""))
+    bmc_target_key = mock_bmc_target_key_from_url(str(bmc_external.get("url") or ""))
+    now_iso = utc_now_iso()
+    final_payload = load_final_fixture()
+    bmc_final_payload = load_bmc_final_fixture()
+    district_count = len(final_payload.get("districts") or [])
+
+    if action == "stop":
+        return {
+            "enabled": False,
+            "intervalSeconds": interval_seconds,
+            "updatedAt": now_iso,
+            "nextRunAt": None,
+            "targetKey": target_key,
+            "bmcTargetKey": bmc_target_key,
+            "totalDistricts": int(existing.get("totalDistricts") or district_count),
+            "openedCount": int(existing.get("openedCount") or 0),
+            "districtOrder": existing.get("districtOrder") or [],
+            "seed": int(existing.get("seed") or 42),
+            "completedCycles": int(existing.get("completedCycles") or 0),
+            "lastTickAt": existing.get("lastTickAt"),
+            "lastProgress": existing.get("lastProgress"),
+            "lastReportedPollingUnits": existing.get("lastReportedPollingUnits"),
+        }
+
+    if action in {"start", "reset"}:
+        if schedule_enabled or str(payload.get("scheduleAction") or "").strip().lower() in {"start", "resume"}:
+            assert_monitor_mock_fetch_timing(
+                mock_interval_seconds=interval_seconds,
+                fetch_interval_seconds=schedule_interval_seconds,
+            )
+        state = {
+            "enabled": True,
+            "intervalSeconds": interval_seconds,
+            "updatedAt": now_iso,
+            "nextRunAt": iso_after_seconds(interval_seconds),
+            "targetKey": target_key,
+            "bmcTargetKey": bmc_target_key,
+            "completedCycles": 0,
+            "lastTickAt": None,
+            **initial_mock_state(district_count=district_count),
+        }
+        governor_snapshot, bmc_snapshot, state = build_dual_mock_reset_snapshots(
+            state=state,
+            governor_final_payload=final_payload,
+            bmc_final_payload=bmc_final_payload,
+        )
+        store.write_absolute_json(target_key, governor_snapshot)
+        store.write_absolute_json(bmc_target_key, bmc_snapshot)
+        state["lastTickAt"] = now_iso
+        state["lastProgress"] = governor_snapshot.get("total", {}).get("progress")
+        polling_units = (
+            governor_snapshot.get("total", {}).get("pollingUnits")
+            if isinstance(governor_snapshot.get("total"), dict)
+            else {}
+        )
+        state["lastReportedPollingUnits"] = (
+            polling_units.get("reported") if isinstance(polling_units, dict) else 0
+        )
+        return state
+
+    enabled = bool(existing.get("enabled"))
+    if "mockEnabled" in payload:
+        mock_enabled = payload.get("mockEnabled")
+        if not isinstance(mock_enabled, bool):
+            raise HTTPException(status_code=400, detail="mockEnabled must be a boolean.")
+        enabled = mock_enabled
+
+    next_run_at = str(existing.get("nextRunAt") or "").strip() or None
+    if enabled and next_run_at is None:
+        next_run_at = iso_after_seconds(interval_seconds)
+    if not enabled:
+        next_run_at = None
+
+    if enabled and schedule_enabled:
+        assert_monitor_mock_fetch_timing(
+            mock_interval_seconds=interval_seconds,
+            fetch_interval_seconds=schedule_interval_seconds,
+        )
+
+    return {
+        "enabled": enabled,
+        "intervalSeconds": interval_seconds,
+        "updatedAt": now_iso,
+        "nextRunAt": next_run_at,
+        "targetKey": target_key,
+        "bmcTargetKey": str(existing.get("bmcTargetKey") or bmc_target_key),
+        "openedCount": int(existing.get("openedCount") or 0),
+        "totalDistricts": int(existing.get("totalDistricts") or district_count),
+        "districtOrder": existing.get("districtOrder") or [],
+        "seed": int(existing.get("seed") or 42),
+        "completedCycles": int(existing.get("completedCycles") or 0),
+        "lastTickAt": existing.get("lastTickAt"),
+        "lastProgress": existing.get("lastProgress"),
+        "lastReportedPollingUnits": existing.get("lastReportedPollingUnits"),
+    }
+
+
+def perform_monitor_mock_tick(*, trigger: str) -> dict[str, Any]:
+    with _monitor_mock_execution_lock:
+        current = effective_monitor_mock_config()
+        if not current.get("enabled"):
+            return {}
+        saved = dict(current.get("savedConfig") or {})
+        governor_final_payload = load_final_fixture()
+        bmc_final_payload = load_bmc_final_fixture()
+        governor_snapshot, bmc_snapshot, updated_state = build_dual_mock_tick_snapshots(
+            state=saved,
+            governor_final_payload=governor_final_payload,
+            bmc_final_payload=bmc_final_payload,
+        )
+        target_key = str(updated_state.get("targetKey") or current.get("targetKey") or DEFAULT_MOCK_S3_KEY)
+        bmc_target_key = str(
+            updated_state.get("bmcTargetKey") or current.get("bmcTargetKey") or DEFAULT_BMC_MOCK_S3_KEY
+        )
+        store.write_absolute_json(target_key, governor_snapshot)
+        store.write_absolute_json(bmc_target_key, bmc_snapshot)
+        completed_at = utc_now_iso()
+        updated_state["enabled"] = True
+        updated_state["intervalSeconds"] = int(current.get("intervalSeconds") or MIN_MOCK_INTERVAL_SECONDS)
+        updated_state["targetKey"] = target_key
+        updated_state["bmcTargetKey"] = bmc_target_key
+        updated_state["lastTickAt"] = completed_at
+        updated_state["updatedAt"] = completed_at
+        updated_state["lastProgress"] = governor_snapshot.get("total", {}).get("progress")
+        polling_units = (
+            governor_snapshot.get("total", {}).get("pollingUnits")
+            if isinstance(governor_snapshot.get("total"), dict)
+            else {}
+        )
+        updated_state["lastReportedPollingUnits"] = (
+            polling_units.get("reported") if isinstance(polling_units, dict) else None
+        )
+        updated_state["nextRunAt"] = iso_after_seconds(int(updated_state["intervalSeconds"]))
+        write_monitor_mock(updated_state)
+        return {
+            "trigger": trigger,
+            "targetKey": target_key,
+            "bmcTargetKey": bmc_target_key,
+            "openedCount": int(updated_state.get("openedCount") or 0),
+            "totalDistricts": int(updated_state.get("totalDistricts") or 0),
+            "progress": updated_state.get("lastProgress"),
+            "reportedPollingUnits": updated_state.get("lastReportedPollingUnits"),
+            "lastUpdatedAt": governor_snapshot.get("lastUpdatedAt"),
+            "nextRunAt": updated_state.get("nextRunAt"),
+        }
+
+
+def monitor_mock_scheduler_loop() -> None:
+    while not _monitor_mock_scheduler_stop_event.is_set():
+        if not monitor_mock_scheduler_enabled():
+            sleep(1)
+            continue
+        try:
+            mock = effective_monitor_mock_config()
+            next_run_at = parse_iso_datetime(mock.get("nextRunAt"))
+            if mock.get("enabled") and next_run_at is not None and datetime.now(timezone.utc) >= next_run_at:
+                try:
+                    perform_monitor_mock_tick(trigger="automatic")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        sleep(1)
+
+
+def ensure_monitor_mock_scheduler_started() -> None:
+    global _monitor_mock_scheduler_started
+    if _monitor_mock_scheduler_started:
+        return
+    with _monitor_mock_scheduler_start_lock:
+        if _monitor_mock_scheduler_started:
+            return
+        thread = Thread(target=monitor_mock_scheduler_loop, name="results-api-monitor-mock-scheduler", daemon=True)
+        thread.start()
+        _monitor_mock_scheduler_started = True
+
+
+def static_results_parent_prefix() -> str:
+    return parent_prefix_from_static_prefix(settings.static_results_prefix)
+
+
+def static_results_prefix_for_target(target: str) -> str:
+    return prefix_for_target(target, static_results_parent_prefix())
+
+
+def safe_read_active_public_source_saved() -> dict[str, Any]:
+    try:
+        return read_active_public_source(
+            s3_client=store.s3_client,
+            bucket=store.bucket,
+            score_prefix=settings.prefix,
+        )
+    except (BotoCoreError, ClientError):
+        return {"source": DEFAULT_PUBLIC_SOURCE, "updatedAt": None, "savedConfig": {}}
+
+
+def effective_active_public_source_config() -> dict[str, Any]:
+    saved = safe_read_active_public_source_saved()
+    return build_active_public_source_view(
+        parent_prefix=static_results_parent_prefix(),
+        saved=saved.get("savedConfig") or saved,
+    )
+
+
+def bkk_public_export_config() -> dict[str, Any]:
+    return {
+        "source": "fixed",
+        "target": BKK_TARGET,
+        "prefix": static_results_prefix_for_target(BKK_TARGET),
+        "files": [*PUBLIC_EXPORT_FILES, *SORKOR_EXPORT_FILES],
+    }
+
+
+def effective_raw_results_export_config() -> dict[str, Any]:
+    return {
+        "source": "fixed",
+        "target": BKK_TARGET,
+        "prefix": static_results_prefix_for_target(BKK_TARGET),
+        "updatedAt": None,
+        "savedConfig": {},
+        "files": ["raw/latest.json", "raw/history/*.json"],
+    }
+
+
+def normalize_timeout_seconds(value: Any, *, default: float) -> float:
+    try:
+        timeout_seconds = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.1, timeout_seconds)
+
+
+def normalize_interval_seconds(value: Any, *, default: int) -> int:
+    try:
+        interval_seconds = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(10, interval_seconds)
+
+
+def iso_after_seconds(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat(timespec="milliseconds").replace(
+        "+00:00",
+        "Z",
+    )
+
+
+def effective_external_governor_results_config() -> dict[str, Any]:
+    override = safe_read_monitor_external_source_override()
+    env_url = settings.external_governor_results_url
+    env_timeout_seconds = settings.external_governor_results_timeout_seconds
+    if override:
+        enabled = bool(override.get("enabled"))
+        url = str(override.get("url") or "").strip() or None
+        return {
+            "source": "override",
+            "enabled": enabled and bool(url),
+            "url": url if enabled else None,
+            "timeoutSeconds": normalize_timeout_seconds(
+                override.get("timeoutSeconds"),
+                default=env_timeout_seconds,
+            ),
+            "updatedAt": override.get("updatedAt"),
+            "savedConfig": override,
+            "envUrl": env_url,
+            "envTimeoutSeconds": env_timeout_seconds,
+        }
+    return {
+        "source": "env" if env_url else "none",
+        "enabled": bool(env_url),
+        "url": env_url,
+        "timeoutSeconds": env_timeout_seconds,
+        "updatedAt": None,
+        "savedConfig": {},
+        "envUrl": env_url,
+        "envTimeoutSeconds": env_timeout_seconds,
+    }
+
+
+def effective_external_bmc_results_config() -> dict[str, Any]:
+    override = safe_read_monitor_external_bmc_source_override()
+    env_url = settings.external_bmc_results_url
+    env_timeout_seconds = settings.external_bmc_results_timeout_seconds
+    if override:
+        enabled = bool(override.get("enabled"))
+        url = str(override.get("url") or "").strip() or None
+        return {
+            "source": "override",
+            "enabled": enabled and bool(url),
+            "url": url if enabled else None,
+            "timeoutSeconds": normalize_timeout_seconds(
+                override.get("timeoutSeconds"),
+                default=env_timeout_seconds,
+            ),
+            "updatedAt": override.get("updatedAt"),
+            "savedConfig": override,
+            "envUrl": env_url,
+            "envTimeoutSeconds": env_timeout_seconds,
+        }
+    return {
+        "source": "env" if env_url else "none",
+        "enabled": bool(env_url),
+        "url": env_url,
+        "timeoutSeconds": env_timeout_seconds,
+        "updatedAt": None,
+        "savedConfig": {},
+        "envUrl": env_url,
+        "envTimeoutSeconds": env_timeout_seconds,
+    }
+
+
+def sorkor_export_target_config() -> dict[str, Any]:
+    bkk_prefix = static_results_prefix_for_target(BKK_TARGET)
+    live_prefix = static_results_prefix_for_target(LIVE_TARGET)
+    return {
+        "target": BKK_TARGET,
+        "prefix": bkk_prefix,
+        "livePrefix": live_prefix,
+        "summaryKey": f"{bkk_prefix}/sumary-sorkor.json",
+        "districtsKey": f"{bkk_prefix}/districts-sorkor.json",
+        "liveSummaryKey": f"{live_prefix}/sumary-sorkor.json",
+        "liveDistrictsKey": f"{live_prefix}/districts-sorkor.json",
+        "files": list(SORKOR_EXPORT_FILES),
+    }
+
+
+def bmc_raw_export_prefix() -> str:
+    return f"{static_results_prefix_for_target(BKK_TARGET)}/bmc"
+
+
+def maybe_promote_public_results_for_source(source: str) -> dict[str, Any] | None:
+    try:
+        return promote_public_results(
+            s3_client=store.s3_client,
+            bucket=store.bucket,
+            parent_prefix=static_results_parent_prefix(),
+            source_target=source_target_for_public_source(source),
+            optional_files=optional_promote_files_for_source(source),
+        )
+    except PublicSourceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def build_monitor_active_public_source_update(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    existing = safe_read_active_public_source_saved()
+    if "activePublicSource" not in payload:
+        return (
+            {
+                "source": normalize_public_source(existing.get("source")),
+                "updatedAt": existing.get("updatedAt") or utc_now_iso(),
+            },
+            None,
+        )
+    try:
+        new_source = normalize_public_source(payload.get("activePublicSource"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    old_source = normalize_public_source(existing.get("source"))
+    saved = {
+        "source": new_source,
+        "updatedAt": utc_now_iso(),
+    }
+    promote_source = new_source if new_source != old_source else None
+    return saved, promote_source
+
+
+def export_external_public_to_bkk(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        candidates_by_number = candidate_catalog.candidates_by_number()
+    except Exception:
+        candidates_by_number = {}
+    try:
+        districts_by_id = district_catalog.districts_by_id()
+    except Exception:
+        districts_by_id = {}
+    summary_payload = build_governor_results_from_external_payload(
+        raw_payload=raw_payload,
+        candidate_catalog=candidates_by_number,
+        election_id=settings.election_id,
+        title=settings.election_title,
+        delayed_after_minutes=settings.delayed_after_minutes,
+    )
+    districts_payload = build_district_results_from_external_payload(
+        raw_payload=raw_payload,
+        candidate_catalog=candidates_by_number,
+        district_catalog=districts_by_id,
+    )
+    prefix = static_results_prefix_for_target(BKK_TARGET)
+    summary_key = f"{prefix}/sumary.json"
+    districts_key = f"{prefix}/districts.json"
+    store.write_absolute_json(summary_key, summary_payload)
+    store.write_absolute_json(districts_key, districts_payload)
+    return {
+        "target": BKK_TARGET,
+        "prefix": prefix,
+        "summaryKey": summary_key,
+        "districtsKey": districts_key,
+        "dataMode": summary_payload.get("dataInterpretation", {}).get("mode"),
+        "summaryPayload": summary_payload,
+        "districtsPayload": districts_payload,
+    }
+
+
+def export_sorkor_public_to_bkk(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        districts_by_id = district_catalog.districts_by_id()
+    except Exception:
+        districts_by_id = {}
+    summary_payload = build_sorkor_summary_from_external_payload(
+        raw_payload=raw_payload,
+        election_id=settings.sorkor_election_id,
+        title=settings.sorkor_election_title,
+    )
+    districts_payload = build_sorkor_districts_from_external_payload(
+        raw_payload=raw_payload,
+        district_catalog=districts_by_id,
+    )
+    prefix = static_results_prefix_for_target(BKK_TARGET)
+    summary_key = f"{prefix}/sumary-sorkor.json"
+    districts_key = f"{prefix}/districts-sorkor.json"
+    store.write_absolute_json(summary_key, summary_payload)
+    store.write_absolute_json(districts_key, districts_payload)
+    return {
+        "target": BKK_TARGET,
+        "prefix": prefix,
+        "summaryKey": summary_key,
+        "districtsKey": districts_key,
+        "summaryPayload": summary_payload,
+        "districtsPayload": districts_payload,
+    }
+
+
+def monitor_schedule_remaining_seconds(*, enabled: bool, next_run_at: str | None) -> int | None:
+    if not enabled:
+        return None
+    parsed = parse_iso_datetime(next_run_at)
+    if parsed is None:
+        return None
+    return max(0, int((parsed - datetime.now(timezone.utc)).total_seconds()))
+
+
+def effective_monitor_schedule_config() -> dict[str, Any]:
+    override = safe_read_monitor_schedule_override()
+    enabled = bool(override.get("enabled"))
+    interval_seconds = normalize_interval_seconds(override.get("intervalSeconds"), default=300)
+    next_run_at = str(override.get("nextRunAt") or "").strip() or None
+    active_next_run_at = next_run_at if enabled else None
+    remaining_seconds = monitor_schedule_remaining_seconds(enabled=enabled, next_run_at=active_next_run_at)
+    return {
+        "enabled": enabled,
+        "status": "running" if enabled else "stopped",
+        "intervalSeconds": interval_seconds,
+        "updatedAt": override.get("updatedAt"),
+        "lastTriggeredAt": override.get("lastTriggeredAt"),
+        "lastCompletedAt": override.get("lastCompletedAt"),
+        "nextRunAt": active_next_run_at,
+        "remainingSeconds": remaining_seconds,
+        "savedConfig": override,
+    }
+
+
+def monitor_fetch_log_entries() -> list[dict[str, Any]]:
+    payload = safe_read_monitor_fetch_log()
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [item for item in entries if isinstance(item, dict)]
+
+
+def validate_monitor_external_source_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return validate_monitor_source_endpoint_payload(
+        payload,
+        default_timeout_seconds=settings.external_governor_results_timeout_seconds,
+    )
+
+
+def validate_monitor_bmc_source_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return validate_monitor_source_endpoint_payload(
+        payload,
+        default_timeout_seconds=settings.external_bmc_results_timeout_seconds,
+        enabled_key="bmcEnabled",
+        url_key="bmcUrl",
+        timeout_key="bmcTimeoutSeconds",
+    )
+
+
+def validate_monitor_source_endpoint_payload(
+    payload: dict[str, Any],
+    *,
+    default_timeout_seconds: float,
+    enabled_key: str = "enabled",
+    url_key: str = "url",
+    timeout_key: str = "timeoutSeconds",
+) -> dict[str, Any]:
+    enabled = payload.get(enabled_key)
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail=f"{enabled_key} must be a boolean.")
+
+    url = str(payload.get(url_key) or "").strip()
+    if enabled and not url:
+        raise HTTPException(status_code=400, detail=f"{url_key} is required when {enabled_key} is true.")
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https", "s3"}:
+            raise HTTPException(status_code=400, detail=f"{url_key} must start with http://, https://, or s3://.")
+
+    timeout_value = payload.get(timeout_key, default_timeout_seconds)
+    try:
+        timeout_seconds = float(timeout_value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{timeout_key} must be a number.") from None
+    if timeout_seconds < 0.1:
+        raise HTTPException(status_code=400, detail=f"{timeout_key} must be at least 0.1.")
+
+    return {
+        "enabled": enabled,
+        "url": url or None,
+        "timeoutSeconds": timeout_seconds,
+        "updatedAt": utc_now_iso(),
+    }
+
+
+def parse_monitor_schedule_interval_seconds(payload: dict[str, Any], *, existing: dict[str, Any]) -> int:
+    if "scheduleIntervalSeconds" not in payload:
+        return normalize_interval_seconds(existing.get("intervalSeconds"), default=300)
+    interval_value = payload.get("scheduleIntervalSeconds")
+    try:
+        interval_seconds = int(interval_value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="scheduleIntervalSeconds must be an integer.") from None
+    if interval_seconds < 10:
+        raise HTTPException(status_code=400, detail="scheduleIntervalSeconds must be at least 10.")
+    return interval_seconds
+
+
+def build_monitor_schedule_update(payload: dict[str, Any]) -> dict[str, Any]:
+    existing = safe_read_monitor_schedule_override()
+    interval_seconds = parse_monitor_schedule_interval_seconds(payload, existing=existing)
+    action = str(payload.get("scheduleAction") or "").strip().lower()
+    if action and action not in MONITOR_SCHEDULE_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="scheduleAction must be one of: start, stop, resume.",
+        )
+    now_iso = utc_now_iso()
+    preserved = {
+        "lastTriggeredAt": existing.get("lastTriggeredAt"),
+        "lastCompletedAt": existing.get("lastCompletedAt"),
+    }
+
+    if action in {"start", "resume"}:
+        mock = effective_monitor_mock_config()
+        if mock.get("enabled"):
+            assert_monitor_mock_fetch_timing(
+                mock_interval_seconds=int(mock.get("intervalSeconds") or MIN_MOCK_INTERVAL_SECONDS),
+                fetch_interval_seconds=interval_seconds,
+            )
+        return {
+            "enabled": True,
+            "intervalSeconds": interval_seconds,
+            "updatedAt": now_iso,
+            **preserved,
+            "nextRunAt": iso_after_seconds(interval_seconds),
+        }
+
+    if action == "stop":
+        return {
+            "enabled": False,
+            "intervalSeconds": interval_seconds,
+            "updatedAt": now_iso,
+            **preserved,
+            "nextRunAt": None,
+        }
+
+    enabled = bool(existing.get("enabled"))
+    if "scheduleEnabled" in payload:
+        schedule_enabled = payload.get("scheduleEnabled")
+        if not isinstance(schedule_enabled, bool):
+            raise HTTPException(status_code=400, detail="scheduleEnabled must be a boolean.")
+        enabled = schedule_enabled
+
+    next_run_at = str(existing.get("nextRunAt") or "").strip() or None
+    if enabled and next_run_at is None:
+        next_run_at = iso_after_seconds(interval_seconds)
+
+    if enabled:
+        mock = effective_monitor_mock_config()
+        if mock.get("enabled"):
+            assert_monitor_mock_fetch_timing(
+                mock_interval_seconds=int(mock.get("intervalSeconds") or MIN_MOCK_INTERVAL_SECONDS),
+                fetch_interval_seconds=interval_seconds,
+            )
+
+    return {
+        "enabled": enabled,
+        "intervalSeconds": interval_seconds,
+        "updatedAt": existing.get("updatedAt") or now_iso,
+        **preserved,
+        "nextRunAt": next_run_at if enabled else None,
+    }
+
+
+def read_external_governor_results_payload() -> dict[str, Any] | None:
+    config = effective_external_governor_results_config()
+    if not config.get("enabled") or not config.get("url"):
+        return None
+    payload = read_json_source(
+        source=str(config["url"]),
+        timeout_seconds=float(config["timeoutSeconds"]),
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+def read_external_bmc_results_payload() -> dict[str, Any] | None:
+    config = effective_external_bmc_results_config()
+    if not config.get("enabled") or not config.get("url"):
+        return None
+    payload = read_json_source(
+        source=str(config["url"]),
+        timeout_seconds=float(config["timeoutSeconds"]),
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+def write_monitor_schedule(payload: dict[str, Any]) -> None:
+    store.write_json(MONITOR_SCHEDULE_KEY, payload)
+
+
+def refresh_monitor_schedule_after_fetch(triggered_at: str, completed_at: str) -> dict[str, Any]:
+    current = effective_monitor_schedule_config()
+    if not current.get("enabled"):
+        return current
+    saved = {
+        "enabled": True,
+        "intervalSeconds": int(current["intervalSeconds"]),
+        "updatedAt": current.get("updatedAt") or completed_at,
+        "lastTriggeredAt": triggered_at,
+        "lastCompletedAt": completed_at,
+        "nextRunAt": iso_after_seconds(int(current["intervalSeconds"])),
+    }
+    write_monitor_schedule(saved)
+    return effective_monitor_schedule_config()
+
+
+def append_monitor_fetch_log(entry: dict[str, Any]) -> None:
+    current_entries = monitor_fetch_log_entries()
+    payload = {
+        "schemaVersion": "1.0",
+        "resource": "governor-results-monitor-log",
+        "updatedAt": utc_now_iso(),
+        "entries": [entry, *current_entries][:MONITOR_FETCH_LOG_LIMIT],
+    }
+    store.write_json(MONITOR_FETCH_LOG_KEY, payload)
+
+
+def perform_monitor_fetch(*, trigger: str) -> dict[str, Any]:
+    with _monitor_fetch_execution_lock:
+        governor_config = effective_external_governor_results_config()
+        bmc_config = effective_external_bmc_results_config()
+        governor_enabled = bool(governor_config.get("enabled") and governor_config.get("url"))
+        bmc_enabled = bool(bmc_config.get("enabled") and bmc_config.get("url"))
+        if not governor_enabled and not bmc_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="No external endpoint is enabled. Save an enabled governor or BMC URL first.",
+            )
+
+        started_at = utc_now_iso()
+        governor_result: dict[str, Any] = {"status": "skipped"}
+        bmc_result: dict[str, Any] = {"status": "skipped"}
+        static_export_response: dict[str, Any] | None = None
+        sorkor_export_response: dict[str, Any] | None = None
+        raw_export: dict[str, Any] | None = None
+        bmc_raw_export: dict[str, Any] | None = None
+        public_promote = None
+        summary_payload: dict[str, Any] | None = None
+        districts_payload: dict[str, Any] | None = None
+        sorkor_summary_payload: dict[str, Any] | None = None
+        sorkor_districts_payload: dict[str, Any] | None = None
+        upstream: dict[str, Any] | None = None
+        bmc_upstream: dict[str, Any] | None = None
+
+        if governor_enabled:
+            try:
+                raw_payload = read_external_governor_results_payload()
+                if raw_payload is None:
+                    raise ValueError("Governor endpoint did not return a JSON object.")
+                raw_export = export_raw_governor_results(raw_payload)
+                static_export = export_external_public_to_bkk(raw_payload)
+                summary_payload = static_export["summaryPayload"]
+                districts_payload = static_export["districtsPayload"]
+                total = raw_payload.get("total") if isinstance(raw_payload.get("total"), dict) else {}
+                polling_units = total.get("pollingUnits") if isinstance(total.get("pollingUnits"), dict) else {}
+                upstream = {
+                    "type": raw_payload.get("type"),
+                    "lastUpdatedAt": raw_payload.get("lastUpdatedAt"),
+                    "districtCount": len(raw_payload.get("districts", []))
+                    if isinstance(raw_payload.get("districts"), list)
+                    else 0,
+                    "reportedPollingUnits": polling_units.get("reported"),
+                    "totalPollingUnits": polling_units.get("total"),
+                }
+                static_export_response = {
+                    key: value
+                    for key, value in static_export.items()
+                    if key not in {"summaryPayload", "districtsPayload"}
+                }
+                governor_result = {
+                    "status": "success",
+                    "sourceUrl": governor_config.get("url"),
+                    "summaryKey": static_export.get("summaryKey"),
+                    "districtsKey": static_export.get("districtsKey"),
+                    "rawLatestKey": raw_export.get("latestKey"),
+                    "rawHistoryKey": raw_export.get("historyKey"),
+                }
+            except HTTPException as exc:
+                governor_result = {
+                    "status": "error",
+                    "sourceUrl": governor_config.get("url"),
+                    "message": str(exc.detail),
+                }
+            except Exception as exc:
+                governor_result = {
+                    "status": "error",
+                    "sourceUrl": governor_config.get("url"),
+                    "message": str(exc),
+                }
+
+        if bmc_enabled:
+            try:
+                raw_bmc_payload = read_external_bmc_results_payload()
+                if raw_bmc_payload is None:
+                    raise ValueError("BMC endpoint did not return a JSON object.")
+                bmc_raw_export = export_raw_bmc_results(raw_bmc_payload)
+                sorkor_export = export_sorkor_public_to_bkk(raw_bmc_payload)
+                sorkor_summary_payload = sorkor_export["summaryPayload"]
+                sorkor_districts_payload = sorkor_export["districtsPayload"]
+                total = raw_bmc_payload.get("total") if isinstance(raw_bmc_payload.get("total"), dict) else {}
+                polling_units = total.get("pollingUnits") if isinstance(total.get("pollingUnits"), dict) else {}
+                bmc_upstream = {
+                    "type": raw_bmc_payload.get("type"),
+                    "lastUpdatedAt": raw_bmc_payload.get("lastUpdatedAt"),
+                    "districtCount": len(raw_bmc_payload.get("districts", []))
+                    if isinstance(raw_bmc_payload.get("districts"), list)
+                    else 0,
+                    "reportedPollingUnits": polling_units.get("reported"),
+                    "totalPollingUnits": polling_units.get("total"),
+                }
+                sorkor_export_response = {
+                    key: value
+                    for key, value in sorkor_export.items()
+                    if key not in {"summaryPayload", "districtsPayload"}
+                }
+                bmc_result = {
+                    "status": "success",
+                    "sourceUrl": bmc_config.get("url"),
+                    "summaryKey": sorkor_export.get("summaryKey"),
+                    "districtsKey": sorkor_export.get("districtsKey"),
+                    "rawLatestKey": bmc_raw_export.get("latestKey"),
+                    "rawHistoryKey": bmc_raw_export.get("historyKey"),
+                }
+            except HTTPException as exc:
+                bmc_result = {
+                    "status": "error",
+                    "sourceUrl": bmc_config.get("url"),
+                    "message": str(exc.detail),
+                }
+            except Exception as exc:
+                bmc_result = {
+                    "status": "error",
+                    "sourceUrl": bmc_config.get("url"),
+                    "message": str(exc),
+                }
+
+        governor_success = governor_result.get("status") == "success"
+        bmc_success = bmc_result.get("status") == "success"
+        if not governor_success and not bmc_success:
+            messages = [
+                str(item.get("message") or item.get("status"))
+                for item in (governor_result, bmc_result)
+                if item.get("status") == "error"
+            ]
+            detail = "; ".join(messages) if messages else "Unable to fetch external endpoints."
+            completed_at = utc_now_iso()
+            try:
+                refresh_monitor_schedule_after_fetch(started_at, completed_at)
+            except Exception:
+                pass
+            try:
+                append_monitor_fetch_log(
+                    {
+                        "startedAt": started_at,
+                        "completedAt": completed_at,
+                        "status": "error",
+                        "trigger": trigger,
+                        "governorStatus": governor_result.get("status"),
+                        "bmcStatus": bmc_result.get("status"),
+                        "message": detail,
+                    }
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail=detail)
+
+        invalidate_result_caches()
+        completed_at = utc_now_iso()
+        schedule = refresh_monitor_schedule_after_fetch(started_at, completed_at)
+        active_public_source = effective_active_public_source_config()
+        public_promote_error = None
+        if active_public_source.get("source") == "bkk" and (governor_success or bmc_success):
+            try:
+                public_promote = maybe_promote_public_results_for_source("bkk")
+            except HTTPException as exc:
+                public_promote_error = exc.detail
+        overall_status = "success" if governor_success and bmc_success else "partial_success"
+        response: dict[str, Any] = {
+            "schemaVersion": "1.0",
+            "resource": "governor-results-monitor-fetch",
+            "fetchedAt": completed_at,
+            "trigger": trigger,
+            "status": overall_status,
+            "current": governor_config,
+            "bmc": bmc_config,
+            "governorFetch": governor_result,
+            "bmcFetch": bmc_result,
+            "bkkExportTarget": bkk_public_export_config(),
+            "sorkorExportTarget": sorkor_export_target_config(),
+            "rawExportTarget": effective_raw_results_export_config(),
+            "activePublicSource": active_public_source,
+            "publicPromote": public_promote,
+            "schedule": schedule,
+            "logs": monitor_fetch_log_entries(),
+            "mock": effective_monitor_mock_config(),
+        }
+        if public_promote_error is not None:
+            response["publicPromoteError"] = public_promote_error
+        if upstream is not None:
+            response["upstream"] = upstream
+        if bmc_upstream is not None:
+            response["bmcUpstream"] = bmc_upstream
+        if summary_payload is not None:
+            response["publicSummary"] = {
+                "resultStatus": summary_payload.get("pageMeta", {}).get("resultStatus"),
+                "countedUnits": summary_payload.get("summary", {}).get("countedUnits"),
+                "totalUnits": summary_payload.get("summary", {}).get("totalUnits"),
+                "lastUpdatedAt": summary_payload.get("summary", {}).get("lastUpdatedAt"),
+                "dataInterpretation": summary_payload.get("dataInterpretation"),
+            }
+        if districts_payload is not None:
+            response["districtPayloadCount"] = len(districts_payload.get("constituencies", []))
+        if sorkor_summary_payload is not None:
+            response["sorkorPublicSummary"] = {
+                "resultStatus": sorkor_summary_payload.get("pageMeta", {}).get("resultStatus"),
+                "countedUnits": sorkor_summary_payload.get("summary", {}).get("countedUnits"),
+                "totalUnits": sorkor_summary_payload.get("summary", {}).get("totalUnits"),
+                "lastUpdatedAt": sorkor_summary_payload.get("summary", {}).get("lastUpdatedAt"),
+            }
+        if sorkor_districts_payload is not None:
+            response["sorkorDistrictPayloadCount"] = len(
+                sorkor_districts_payload.get("data", {}).get("constituencies", [])
+            )
+        if raw_export is not None:
+            response["rawExport"] = raw_export
+        if bmc_raw_export is not None:
+            response["bmcRawExport"] = bmc_raw_export
+        if static_export_response is not None:
+            response["staticExport"] = static_export_response
+        if sorkor_export_response is not None:
+            response["sorkorExport"] = sorkor_export_response
+        append_monitor_fetch_log(
+            {
+                "startedAt": started_at,
+                "completedAt": completed_at,
+                "status": overall_status,
+                "trigger": trigger,
+                "governorStatus": governor_result.get("status"),
+                "bmcStatus": bmc_result.get("status"),
+                "sourceUrl": governor_config.get("url"),
+                "bmcSourceUrl": bmc_config.get("url"),
+                "summaryKey": governor_result.get("summaryKey"),
+                "districtsKey": governor_result.get("districtsKey"),
+                "sorkorSummaryKey": bmc_result.get("summaryKey"),
+                "sorkorDistrictsKey": bmc_result.get("districtsKey"),
+                "rawLatestKey": governor_result.get("rawLatestKey"),
+                "rawHistoryKey": governor_result.get("rawHistoryKey"),
+                "bmcRawLatestKey": bmc_result.get("rawLatestKey"),
+                "bmcRawHistoryKey": bmc_result.get("rawHistoryKey"),
+            }
+        )
+        response["logs"] = monitor_fetch_log_entries()
+        return response
+
+
+def monitor_fetch_scheduler_enabled() -> bool:
+    return os.environ.get("RESULTS_API_ENABLE_MONITOR_FETCH_SCHEDULER", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def monitor_mock_scheduler_enabled() -> bool:
+    return os.environ.get("RESULTS_API_ENABLE_MONITOR_MOCK_SCHEDULER", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def monitor_scheduler_loop() -> None:
+    while not _monitor_scheduler_stop_event.is_set():
+        if not monitor_fetch_scheduler_enabled():
+            sleep(1)
+            continue
+        try:
+            schedule = effective_monitor_schedule_config()
+            next_run_at = parse_iso_datetime(schedule.get("nextRunAt"))
+            if schedule.get("enabled") and next_run_at is not None and datetime.now(timezone.utc) >= next_run_at:
+                try:
+                    perform_monitor_fetch(trigger="automatic")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        sleep(1)
+
+
+def ensure_monitor_scheduler_started() -> None:
+    global _monitor_scheduler_started
+    if _monitor_scheduler_started:
+        return
+    with _monitor_scheduler_start_lock:
+        if _monitor_scheduler_started:
+            return
+        thread = Thread(target=monitor_scheduler_loop, name="results-api-monitor-scheduler", daemon=True)
+        thread.start()
+        _monitor_scheduler_started = True
+
+
+@app.on_event("startup")
+def start_monitor_scheduler() -> None:
+    if monitor_fetch_scheduler_enabled():
+        ensure_monitor_scheduler_started()
+    if monitor_mock_scheduler_enabled():
+        ensure_monitor_mock_scheduler_started()
 
 
 def current_data_mode() -> str:
-    mode = str(read_data_mode_override().get("mode") or settings.default_data_mode).strip()
+    mode = str(settings.default_data_mode).strip()
     return mode if mode in DATA_INTERPRETATION_MODES else settings.default_data_mode
-
-
-def data_mode_options() -> list[dict[str, str]]:
-    return [
-        {"mode": mode, "description": description}
-        for mode, description in DATA_INTERPRETATION_MODES.items()
-    ]
-
-
-def district_summary_override_key(area_id: str) -> str:
-    return f"{DISTRICT_SUMMARY_OVERRIDE_PREFIX}/{area_id}/summary.json"
-
-
-def read_district_summary_override(area_id: str) -> dict[str, Any]:
-    return store.read_json(district_summary_override_key(area_id)) or {}
-
-
-def district_round_overrides_key(area_id: str) -> str:
-    return f"{DISTRICT_ROUND_OVERRIDE_PREFIX}/{area_id}/rounds.json"
-
-
-def read_district_round_overrides(area_id: str) -> dict[str, Any]:
-    return store.read_json(district_round_overrides_key(area_id)) or {"rounds": {}}
-
-
-def round_id_for_result(result: dict[str, Any]) -> str:
-    source_id = str(result.get("source_message_id") or "").strip()
-    if source_id:
-        return f"source:{source_id}"
-    approved_at = str(result.get("approved_at") or result.get("updated_at") or "").strip()
-    return f"round:{approved_at or 'unknown'}"
-
-
-def result_to_round(result: dict[str, Any], index: int) -> dict[str, Any]:
-    return without_nulls(
-        {
-            "roundId": round_id_for_result(result),
-            "sourceMessageId": result.get("source_message_id"),
-            "areaId": str(result.get("area_id") or ""),
-            "position": (index + 1) * 1000,
-            "reportedAt": result.get("approved_at") or result.get("updated_at") or result.get("submitted_at"),
-            "sourceType": "approved_result",
-            "deleted": False,
-            "candidateScores": result.get("candidate_scores") or [],
-            "eligibleVoters": result.get("eligible_voters"),
-            "voterTurnout": result.get("voter_turnout"),
-            "validBallots": result.get("valid_ballots"),
-            "invalidBallots": result.get("invalid_ballots"),
-            "abstainedBallots": result.get("abstained_ballots"),
-            "rawResult": result,
-        }
-    )
-
-
-def round_to_result(round_item: dict[str, Any]) -> dict[str, Any]:
-    base = dict(round_item.get("rawResult") or {})
-    base.update(
-        without_nulls(
-            {
-                "source_message_id": round_item.get("sourceMessageId") or round_item.get("roundId"),
-                "area_id": round_item.get("areaId"),
-                "approved_at": round_item.get("reportedAt"),
-                "candidate_scores": round_item.get("candidateScores") or [],
-                "eligible_voters": round_item.get("eligibleVoters"),
-                "voter_turnout": round_item.get("voterTurnout"),
-                "valid_ballots": round_item.get("validBallots"),
-                "invalid_ballots": round_item.get("invalidBallots"),
-                "abstained_ballots": round_item.get("abstainedBallots"),
-                "round_id": round_item.get("roundId"),
-                "round_position": round_item.get("position"),
-                "round_source_type": round_item.get("sourceType"),
-            }
-        )
-    )
-    return without_nulls(base)
-
-
-def apply_round_overrides(area_id: str, approved_results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    rounds = {
-        item["roundId"]: item
-        for index, result in enumerate(approved_results)
-        for item in [result_to_round(result, index)]
-    }
-    overrides = read_district_round_overrides(area_id).get("rounds") or {}
-    for round_id, override in overrides.items():
-        if not isinstance(override, dict):
-            continue
-        existing = rounds.get(round_id, {"roundId": round_id, "areaId": area_id, "sourceType": "manual_round"})
-        rounds[round_id] = without_nulls({**existing, **override, "roundId": round_id, "areaId": area_id})
-
-    ordered_rounds = sorted(
-        rounds.values(),
-        key=lambda item: (
-            int(item.get("position") or 0),
-            str(item.get("reportedAt") or ""),
-            str(item.get("roundId") or ""),
-        ),
-    )
-    effective_rounds = [item for item in ordered_rounds if not item.get("deleted")]
-    return ordered_rounds, [round_to_result(item) for item in effective_rounds]
-
-
-def apply_district_summary_overrides(approved_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    updated_results = []
-    for result in approved_results:
-        area_id = str(result.get("area_id") or "").strip()
-        if not area_id:
-            updated_results.append(result)
-            continue
-        override = read_district_summary_override(area_id)
-        if not override:
-            updated_results.append(result)
-            continue
-        updated = dict(result)
-        for response_field, source_field in SUMMARY_FIELD_TO_RESULT_FIELD.items():
-            if response_field in override:
-                updated[source_field] = override[response_field]
-        updated_results.append(updated)
-    return updated_results
 
 
 def aggregate_incremental_area_results(approved_results: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1295,15 +2367,45 @@ def aggregate_incremental_area_results(approved_results: list[dict[str, Any]]) -
     return without_nulls(latest)
 
 
+LATEST_SNAPSHOT_MERGE_FIELDS = (
+    "candidate_scores",
+    "eligible_voters",
+    "voter_turnout",
+    "valid_ballots",
+    "invalid_ballots",
+    "abstained_ballots",
+)
+
+
+def latest_snapshot_field_has_data(field: str, value: Any) -> bool:
+    if field == "candidate_scores":
+        return isinstance(value, list) and bool(value)
+    return value is not None
+
+
+def aggregate_latest_snapshot_area_results(approved_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not approved_results:
+        return None
+    latest = dict(approved_results[0])
+    for field in LATEST_SNAPSHOT_MERGE_FIELDS:
+        if latest_snapshot_field_has_data(field, latest.get(field)):
+            continue
+        for result in approved_results[1:]:
+            candidate = result.get(field)
+            if latest_snapshot_field_has_data(field, candidate):
+                latest[field] = candidate
+                break
+    latest["data_interpretation_mode"] = "latest_snapshot"
+    latest["included_report_count"] = 1
+    return without_nulls(latest)
+
+
 def interpreted_area_result(approved_results: list[dict[str, Any]], mode: str) -> dict[str, Any] | None:
     if not approved_results:
         return None
     if mode == "incremental_delta":
         return aggregate_incremental_area_results(approved_results)
-    latest = dict(approved_results[0])
-    latest["data_interpretation_mode"] = mode
-    latest["included_report_count"] = 1
-    return without_nulls(latest)
+    return aggregate_latest_snapshot_area_results(approved_results)
 
 
 def interpreted_results_by_area(approved_results_by_area: dict[str, list[dict[str, Any]]], mode: str) -> dict[str, list[dict[str, Any]]]:
@@ -1317,1281 +2419,11 @@ def interpreted_results_by_area(approved_results_by_area: dict[str, list[dict[st
 def interpreted_public_results(mode: str) -> list[dict[str, Any]]:
     results = []
     for area_id in store.list_area_indexes(settings.source_election_id):
-        _, effective_results = apply_round_overrides(
-            area_id,
-            store.approved_results_for_area(settings.source_election_id, area_id),
-        )
-        approved_results = apply_district_summary_overrides(effective_results)
+        approved_results = store.approved_results_for_area(settings.source_election_id, area_id)
         result = interpreted_area_result(approved_results, mode)
         if result:
             results.append(result)
     return results
-
-
-def monitor_overrides_response() -> dict[str, Any]:
-    try:
-        return {
-            "schemaVersion": "1.0",
-            "resource": "election-monitor-overrides",
-            "electionId": settings.election_id,
-            "pageMeta": read_page_meta_override(),
-            "dataMode": read_data_mode_override(),
-            "dataModeOptions": data_mode_options(),
-            "districtSummaries": store.list_json_objects(DISTRICT_SUMMARY_OVERRIDE_PREFIX, limit=200),
-        }
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-
-
-def normalize_actor_reason(payload: dict[str, Any]) -> tuple[str, str | None]:
-    actor = str(payload.get("actor") or "operator").strip() or "operator"
-    reason = str(payload.get("reason") or "").strip() or None
-    return actor, reason
-
-
-def write_monitor_audit_event(
-    *,
-    event_type: str,
-    actor: str,
-    reason: str | None,
-    before: dict[str, Any],
-    after: dict[str, Any],
-    area_id: str | None = None,
-) -> dict[str, Any]:
-    created_at, year, month, day = audit_timestamp()
-    event_id = f"audit_{created_at.replace('-', '').replace(':', '').replace('.', '')}_{event_type}"
-    event = without_nulls(
-        {
-            "schema_version": "2026-06-16",
-            "entity_type": "monitor_audit_event",
-            "event_id": event_id,
-            "event_type": event_type,
-            "election_id": settings.election_id,
-            "area_id": area_id,
-            "actor": actor,
-            "reason": reason,
-            "before": before,
-            "after": after,
-            "created_at": created_at,
-        }
-    )
-    key = f"{MONITOR_AUDIT_PREFIX}/{year}/{month}/{day}/{event_id}.json"
-    store.write_json(key, event)
-    return event
-
-
-def validate_page_meta_payload(payload: dict[str, Any]) -> dict[str, str]:
-    updates: dict[str, str] = {}
-    if "title" in payload:
-        title = str(payload.get("title") or "").strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="title must be a non-empty string.")
-        updates["title"] = title
-    if "resultStatus" in payload:
-        result_status = str(payload.get("resultStatus") or "").strip()
-        if result_status not in ALLOWED_RESULT_STATUSES:
-            raise HTTPException(status_code=400, detail="resultStatus is not supported.")
-        updates["resultStatus"] = result_status
-    if not updates:
-        raise HTTPException(status_code=400, detail="No supported page metadata fields were provided.")
-    return updates
-
-
-def validate_data_mode_payload(payload: dict[str, Any]) -> dict[str, str]:
-    mode = str(payload.get("mode") or "").strip()
-    if mode not in DATA_INTERPRETATION_MODES:
-        raise HTTPException(status_code=400, detail="data mode is not supported.")
-    return {
-        "mode": mode,
-        "description": DATA_INTERPRETATION_MODES[mode],
-    }
-
-
-def validate_summary_override_payload(payload: dict[str, Any], current: dict[str, Any]) -> dict[str, int]:
-    updates: dict[str, int] = {}
-    for field in SUMMARY_OVERRIDE_FIELDS:
-        if field not in payload:
-            continue
-        value = payload[field]
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise HTTPException(status_code=400, detail=f"{field} must be an integer >= 0.")
-        updates[field] = value
-    if not updates:
-        raise HTTPException(status_code=400, detail="No supported summary fields were provided.")
-
-    merged = {**current, **updates}
-    ballot_fields = ("voterTurnout", "validBallots", "invalidBallots", "abstainedBallots")
-    if all(field in merged for field in ballot_fields):
-        if merged["voterTurnout"] != merged["validBallots"] + merged["invalidBallots"] + merged["abstainedBallots"]:
-            raise HTTPException(
-                status_code=400,
-                detail="voterTurnout must equal validBallots + invalidBallots + abstainedBallots.",
-            )
-    if "eligibleVoters" in merged and "voterTurnout" in merged and merged["voterTurnout"] > merged["eligibleVoters"]:
-        raise HTTPException(status_code=400, detail="voterTurnout must not exceed eligibleVoters.")
-    return updates
-
-
-def validate_candidate_scores_payload(payload: dict[str, Any]) -> list[dict[str, int]]:
-    scores = payload.get("candidateScores")
-    if not isinstance(scores, list) or not scores:
-        raise HTTPException(status_code=400, detail="candidateScores must be a non-empty array.")
-    normalized = []
-    for index, item in enumerate(scores, start=1):
-        if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail=f"candidateScores[{index}] must be an object.")
-        try:
-            candidate_number = int(item.get("candidateNumber", item.get("candidate_number")))
-            score = int(item.get("score"))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail=f"candidateScores[{index}] must include integer candidateNumber and score.")
-        if candidate_number <= 0 or score < 0:
-            raise HTTPException(status_code=400, detail=f"candidateScores[{index}] contains an invalid value.")
-        normalized.append({"candidate_number": candidate_number, "score": score})
-    return normalized
-
-
-def validate_round_payload(payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
-    updates: dict[str, Any] = {}
-    if not partial or "candidateScores" in payload:
-        updates["candidateScores"] = validate_candidate_scores_payload(payload)
-    if "reportedAt" in payload:
-        reported_at = str(payload.get("reportedAt") or "").strip()
-        if not reported_at:
-            raise HTTPException(status_code=400, detail="reportedAt must be a non-empty string.")
-        updates["reportedAt"] = reported_at
-    if "position" in payload:
-        try:
-            updates["position"] = int(payload.get("position"))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="position must be an integer.")
-    for field in SUMMARY_OVERRIDE_FIELDS:
-        if field in payload:
-            value = payload[field]
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise HTTPException(status_code=400, detail=f"{field} must be an integer >= 0.")
-            updates[field] = value
-    if not updates:
-        raise HTTPException(status_code=400, detail="No supported round fields were provided.")
-    return updates
-
-
-MONITOR_HTML = """<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>แดชบอร์ดติดตามผลเลือกตั้ง</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --text: #17202a;
-      --muted: #64748b;
-      --line: #d8dee8;
-      --ok: #087f5b;
-      --warn: #b7791f;
-      --bad: #c92a2a;
-      --info: #1c7ed6;
-      --neutral: #475569;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Arial, "Noto Sans Thai", sans-serif;
-      font-size: 14px;
-    }
-    header {
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-      padding: 16px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    h1 { margin: 0; font-size: 20px; font-weight: 700; }
-    main { padding: 20px 24px 28px; }
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    input, select, button {
-      height: 36px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--text);
-      padding: 0 10px;
-      font: inherit;
-    }
-    input { min-width: 220px; }
-    button {
-      cursor: pointer;
-      background: #17202a;
-      color: #fff;
-      border-color: #17202a;
-    }
-    button.secondary {
-      background: #fff;
-      color: var(--text);
-      border-color: var(--line);
-    }
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(120px, 1fr));
-      gap: 12px;
-      margin-bottom: 18px;
-    }
-    .metric {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
-      min-height: 84px;
-    }
-    .metric .label { color: var(--muted); font-size: 12px; }
-    .metric .value { font-size: 26px; font-weight: 700; margin-top: 8px; }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      overflow: hidden;
-      margin-bottom: 18px;
-    }
-    .panel-head {
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      padding: 10px 12px;
-      text-align: left;
-      vertical-align: top;
-      white-space: nowrap;
-    }
-    th {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      background: #fbfcfe;
-    }
-    td.wrap { white-space: normal; min-width: 220px; }
-    .dashboard-grid {
-      display: grid;
-      grid-template-columns: minmax(280px, 1fr) minmax(360px, 2fr);
-      gap: 16px;
-      padding: 14px;
-    }
-    .summary-list {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px 16px;
-      margin: 0;
-    }
-    .summary-list dt { color: var(--muted); }
-    .summary-list dd { margin: 0; font-weight: 700; text-align: right; }
-    .edit-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(260px, 1fr));
-      gap: 16px;
-      padding: 14px;
-    }
-    .edit-form {
-      display: grid;
-      gap: 10px;
-    }
-    .edit-form label {
-      display: grid;
-      gap: 5px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .edit-form input,
-    .edit-form select {
-      width: 100%;
-      min-width: 0;
-    }
-    .form-row {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(120px, 1fr));
-      gap: 10px;
-    }
-    .round-layout {
-      display: grid;
-      grid-template-columns: minmax(360px, 1.25fr) minmax(280px, 0.75fr);
-      gap: 16px;
-      align-items: start;
-    }
-    .round-zone {
-      display: grid;
-      gap: 10px;
-      align-content: start;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfcfe;
-    }
-    .candidate-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 10px;
-      max-height: 360px;
-      overflow: auto;
-      padding-right: 4px;
-    }
-    .round-card {
-      margin: 12px 0;
-    }
-    .round-card > summary {
-      cursor: pointer;
-      list-style: none;
-    }
-    .round-card > summary::-webkit-details-marker {
-      display: none;
-    }
-    .round-summary-title {
-      display: grid;
-      gap: 3px;
-      min-width: 0;
-    }
-    .round-summary-action {
-      color: var(--info);
-      font-weight: 700;
-      white-space: nowrap;
-    }
-    .panel-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .is-collapsed {
-      display: none;
-    }
-    .leaderboard {
-      display: grid;
-      gap: 8px;
-    }
-    .leader {
-      display: grid;
-      grid-template-columns: 34px minmax(160px, 1fr) 90px 80px;
-      gap: 10px;
-      align-items: center;
-      min-height: 34px;
-    }
-    .bar {
-      height: 8px;
-      background: #e2e8f0;
-      border-radius: 999px;
-      overflow: hidden;
-      margin-top: 5px;
-    }
-    .bar span {
-      display: block;
-      height: 100%;
-      background: var(--info);
-      width: 0%;
-    }
-    .candidate-name {
-      min-width: 0;
-      white-space: normal;
-    }
-    .swatch {
-      width: 12px;
-      height: 12px;
-      border-radius: 3px;
-      display: inline-block;
-      margin-right: 6px;
-      vertical-align: -1px;
-      background: var(--neutral);
-    }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 3px 8px;
-      font-size: 12px;
-      font-weight: 700;
-      border: 1px solid;
-    }
-    .complete { color: var(--ok); background: #e6fcf5; border-color: #96f2d7; }
-    .missing_fields, .pending, .delayed { color: var(--warn); background: #fff4db; border-color: #ffd43b; }
-    .conflict { color: var(--bad); background: #fff5f5; border-color: #ffc9c9; }
-    .no_data { color: var(--neutral); background: #f1f5f9; border-color: #cbd5e1; }
-    .muted { color: var(--muted); }
-    .error {
-      margin-bottom: 14px;
-      padding: 10px 12px;
-      border: 1px solid #ffc9c9;
-      background: #fff5f5;
-      color: var(--bad);
-      border-radius: 8px;
-      display: none;
-    }
-    .notice {
-      margin-bottom: 14px;
-      padding: 10px 12px;
-      border: 1px solid #96f2d7;
-      background: #e6fcf5;
-      color: var(--ok);
-      border-radius: 8px;
-      display: none;
-      font-weight: 700;
-    }
-    .detail {
-      position: fixed;
-      inset: 0;
-      z-index: 50;
-      border-top: 0;
-      padding: 24px;
-      display: none;
-      background: rgba(15, 23, 42, 0.45);
-      overflow: auto;
-    }
-    body.modal-open {
-      overflow: hidden;
-    }
-    .detail-card {
-      max-width: min(1180px, calc(100vw - 32px));
-      margin: 28px auto;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
-      overflow: hidden;
-    }
-    .detail-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px;
-      border-bottom: 1px solid var(--line);
-      background: #fbfcfe;
-    }
-    .detail-body {
-      padding: 14px;
-      max-height: calc(100vh - 132px);
-      overflow: auto;
-    }
-    .icon-button {
-      width: 34px;
-      height: 34px;
-      padding: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      line-height: 1;
-    }
-    pre {
-      overflow: auto;
-      background: #0f172a;
-      color: #e2e8f0;
-      padding: 12px;
-      border-radius: 6px;
-      max-height: 360px;
-    }
-    @media (max-width: 960px) {
-      header { align-items: flex-start; flex-direction: column; }
-      .cards { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
-      .dashboard-grid { grid-template-columns: 1fr; }
-      .edit-grid { grid-template-columns: 1fr; }
-      .round-layout { grid-template-columns: 1fr; }
-      .candidate-grid { max-height: none; }
-      .leader { grid-template-columns: 30px minmax(120px, 1fr) 72px; }
-      .leader .percent { display: none; }
-      .table-wrap { overflow-x: auto; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div>
-      <h1>แดชบอร์ดติดตามผลเลือกตั้ง</h1>
-      <div class="muted" id="subtitle">หน้าติดตามข้อมูลบนเครื่อง local</div>
-    </div>
-    <div class="toolbar">
-      <input id="apiKey" type="password" placeholder="X-API-Key ถ้ามี">
-      <button class="secondary" id="saveKey">บันทึกคีย์</button>
-      <button id="refresh">รีเฟรช</button>
-    </div>
-  </header>
-  <main>
-    <div class="error" id="error"></div>
-    <div class="notice" id="notice"></div>
-    <section class="cards" id="cards"></section>
-    <section class="panel">
-      <div class="panel-head">
-        <strong>Dashboard รวมทุกเขต</strong>
-        <div class="muted" id="summaryGeneratedAt"></div>
-      </div>
-      <div class="dashboard-grid">
-        <div>
-          <dl class="summary-list" id="summaryList"></dl>
-        </div>
-        <div>
-          <div class="leaderboard" id="leaderboard"></div>
-        </div>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <strong>แก้ข้อมูลหน้ารวม</strong>
-        <div class="panel-actions">
-          <div class="muted" id="overrideStatus"></div>
-          <button type="button" class="secondary" id="togglePageMetaEditor" aria-expanded="false">เปิดแก้ไข</button>
-        </div>
-      </div>
-      <div class="edit-grid is-collapsed" id="pageMetaEditor">
-        <form class="edit-form" id="pageMetaForm">
-          <label>ชื่อหัวข้อ
-            <input id="overrideTitle" name="title" type="text" placeholder="ชื่อหัวข้อผลเลือกตั้ง">
-          </label>
-          <label>สถานะผล
-            <select id="overrideResultStatus" name="resultStatus">
-              <option value="">ไม่เปลี่ยน</option>
-              <option value="LIVE_COUNT">กำลังนับคะแนน</option>
-              <option value="OFFICIAL">ผลทางการ</option>
-              <option value="PAUSED">หยุดชั่วคราว</option>
-              <option value="DELAYED">ล่าช้า</option>
-            </select>
-          </label>
-          <div class="form-row">
-            <label>ผู้แก้
-              <input id="pageMetaActor" name="actor" type="text" value="operator">
-            </label>
-            <label>เหตุผล
-              <input id="pageMetaReason" name="reason" type="text" placeholder="manual correction">
-            </label>
-          </div>
-          <button type="submit">บันทึกข้อมูลหน้ารวม</button>
-        </form>
-        <form class="edit-form" id="dataModeForm">
-          <label>วิธีตีความรอบรายงาน
-            <select id="dataModeSelect" name="mode">
-              <option value="latest_snapshot">ใช้ยอดล่าสุดของแต่ละเขต</option>
-              <option value="incremental_delta">บวกทุกรอบที่ approved ในเขต</option>
-            </select>
-          </label>
-          <div class="muted" id="dataModeDescription"></div>
-          <div class="form-row">
-            <label>ผู้แก้
-              <input id="dataModeActor" name="actor" type="text" value="operator">
-            </label>
-            <label>เหตุผล
-              <input id="dataModeReason" name="reason" type="text" placeholder="เลือกวิธีรวมข้อมูลวันจริง">
-            </label>
-          </div>
-          <button type="submit">บันทึกวิธีดึงข้อมูล</button>
-        </form>
-        <form class="edit-form" id="summaryForm" style="display:none">
-          <div class="form-row">
-            <label>ผู้มีสิทธิ
-              <input id="overrideEligibleVoters" name="eligibleVoters" type="number" min="0" step="1">
-            </label>
-            <label>ผู้มาใช้สิทธิ
-              <input id="overrideVoterTurnout" name="voterTurnout" type="number" min="0" step="1">
-            </label>
-          </div>
-          <div class="form-row">
-            <label>บัตรดี
-              <input id="overrideValidBallots" name="validBallots" type="number" min="0" step="1">
-            </label>
-            <label>บัตรเสีย
-              <input id="overrideInvalidBallots" name="invalidBallots" type="number" min="0" step="1">
-            </label>
-          </div>
-          <div class="form-row">
-            <label>Vote No
-              <input id="overrideAbstainedBallots" name="abstainedBallots" type="number" min="0" step="1">
-            </label>
-            <label>ผู้แก้
-              <input id="summaryActor" name="actor" type="text" value="operator">
-            </label>
-          </div>
-          <label>เหตุผล
-            <input id="summaryReason" name="reason" type="text" placeholder="manual correction">
-          </label>
-          <button type="submit">บันทึกข้อมูลสรุป</button>
-        </form>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="ค้นหาเขต / district code">
-          <select id="statusFilter">
-            <option value="all">ทุกสถานะ</option>
-            <option value="no_data">ยังไม่มีข้อมูล</option>
-            <option value="pending">รออนุมัติ</option>
-            <option value="missing_fields">ข้อมูลไม่ครบ</option>
-            <option value="delayed">ล่าช้า</option>
-            <option value="conflict">ข้อมูลขัดแย้ง</option>
-            <option value="complete">ครบถ้วน</option>
-          </select>
-        </div>
-        <div class="muted" id="updatedAt"></div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>เขต</th>
-              <th>ข้อมูลเข้า</th>
-              <th>อนุมัติแล้ว</th>
-              <th>อนุมัติล่าสุด</th>
-              <th>สถานะ</th>
-              <th>ข้อมูลที่ขาด / คำเตือน</th>
-              <th>จัดการ</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-      <div class="detail" id="detail"></div>
-    </section>
-  </main>
-  <script>
-    const state = { overview: null, summary: null, districts: [], overrides: null, selected: null };
-    const keyInput = document.getElementById('apiKey');
-    const savedKey = localStorage.getItem('monitorApiKey') || '';
-    keyInput.value = savedKey;
-
-    function headers() {
-      const key = keyInput.value.trim();
-      return key ? {'X-API-Key': key} : {};
-    }
-    function jsonHeaders() {
-      return {...headers(), 'Content-Type': 'application/json'};
-    }
-    function showError(message) {
-      const el = document.getElementById('error');
-      el.textContent = message || '';
-      el.style.display = message ? 'block' : 'none';
-    }
-    function showNotice(message) {
-      const el = document.getElementById('notice');
-      if (state.noticeTimer) window.clearTimeout(state.noticeTimer);
-      el.textContent = message || '';
-      el.style.display = message ? 'block' : 'none';
-      if (message && !message.endsWith('...')) {
-        state.noticeTimer = window.setTimeout(() => showNotice(''), 5000);
-      }
-    }
-    function setSubmitState(form, saving, text) {
-      const button = form.querySelector('button[type="submit"]');
-      if (!button) return;
-      if (!button.dataset.defaultText) button.dataset.defaultText = button.textContent;
-      button.disabled = saving;
-      button.textContent = saving ? text : button.dataset.defaultText;
-    }
-    function resetSubmitStates() {
-      document.querySelectorAll('#pageMetaForm, #dataModeForm, #districtSummaryForm, #newRoundForm, .roundEditForm').forEach((form) => {
-        setSubmitState(form, false);
-      });
-    }
-    async function fetchJson(url) {
-      const response = await fetch(url, { headers: headers() });
-      if (!response.ok) {
-        let detail = response.statusText;
-        try {
-          const payload = await response.json();
-          detail = payload.detail || detail;
-        } catch (_) {}
-        throw new Error(`${response.status} ${detail}`);
-      }
-      return response.json();
-    }
-    async function writeJson(method, url, payload) {
-      showNotice('กำลังบันทึกข้อมูล...');
-      const response = await fetch(url, {
-        method,
-        headers: jsonHeaders(),
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        showNotice('');
-        let detail = response.statusText;
-        try {
-          const body = await response.json();
-          detail = body.detail || detail;
-        } catch (_) {}
-        resetSubmitStates();
-        throw new Error(`${response.status} ${detail}`);
-      }
-      showNotice('บันทึกสำเร็จ');
-      resetSubmitStates();
-      return response.json();
-    }
-    async function patchJson(url, payload) {
-      return writeJson('PATCH', url, payload);
-    }
-    async function postJson(url, payload) {
-      return writeJson('POST', url, payload);
-    }
-    async function deleteJson(url, payload) {
-      return writeJson('DELETE', url, payload);
-    }
-    const statusLabels = {
-      no_data: 'ยังไม่มีข้อมูล',
-      pending: 'รออนุมัติ',
-      missing_fields: 'ข้อมูลไม่ครบ',
-      complete: 'ครบถ้วน',
-      delayed: 'ล่าช้า',
-      conflict: 'ข้อมูลขัดแย้ง',
-    };
-    const fieldLabels = {
-      candidate_scores: 'คะแนนผู้สมัคร',
-      eligible_voters: 'จำนวนผู้มีสิทธิ',
-      voter_turnout: 'จำนวนผู้มาใช้สิทธิ',
-      valid_ballots: 'บัตรดี',
-      invalid_ballots: 'บัตรเสีย',
-      abstained_ballots: 'Vote No',
-      area_id: 'รหัสเขต',
-    };
-    function statusText(value) {
-      return statusLabels[value] || value || '-';
-    }
-    function fieldText(value) {
-      return fieldLabels[value] || value;
-    }
-    function warningText(value) {
-      const map = {
-        'Multiple approved submissions exist for this district.': 'มีผลที่อนุมัติแล้วมากกว่าหนึ่งรายการในเขตนี้',
-        'voter_turnout does not equal valid_ballots + invalid_ballots + abstained_ballots.': 'จำนวนผู้มาใช้สิทธิไม่เท่ากับผลรวมบัตรดี บัตรเสีย และ Vote No',
-        'voter_turnout exceeds eligible_voters.': 'จำนวนผู้มาใช้สิทธิมากกว่าจำนวนผู้มีสิทธิ',
-        'Turnout or ballot fields contain a non-integer value.': 'ข้อมูลผู้มาใช้สิทธิหรือบัตรมีค่าที่ไม่ใช่จำนวนเต็ม',
-        'eligible_voters is not a valid integer.': 'จำนวนผู้มีสิทธิไม่ใช่จำนวนเต็มที่ถูกต้อง',
-      };
-      return map[value] || value;
-    }
-    function card(label, value) {
-      return `<div class="metric"><div class="label">${label}</div><div class="value">${value ?? '-'}</div></div>`;
-    }
-    function renderOverview() {
-      const overview = state.overview?.overview || {};
-      document.getElementById('cards').innerHTML = [
-        card('เขตทั้งหมด', overview.totalDistricts),
-        card('มีข้อมูลแล้ว', overview.districtsWithData),
-        card('ยังไม่มีข้อมูล', overview.districtsWithoutData),
-        card('ครบถ้วน', overview.completeDistricts),
-        card('ยังไม่ครบ', overview.incompleteDistricts),
-        card('ล่าช้า', overview.delayedDistricts),
-      ].join('');
-      document.getElementById('subtitle').textContent = state.overview
-        ? `${state.overview.electionId} · ${state.overview.resource}`
-        : 'หน้าติดตามข้อมูลบนเครื่อง local';
-      document.getElementById('updatedAt').textContent = state.overview
-        ? `สร้างข้อมูลเมื่อ ${timeText(state.overview.generatedAt)}`
-        : '';
-    }
-    function numberText(value) {
-      return typeof value === 'number' ? value.toLocaleString('th-TH') : '-';
-    }
-    function timeText(value) {
-      if (!value) return '-';
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return value;
-      return date.toLocaleString('th-TH', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
-    }
-    function renderDashboard() {
-      const summary = state.summary?.summary || {};
-      const meta = state.summary?.pageMeta || {};
-      const candidates = state.summary?.candidates || [];
-      document.getElementById('summaryGeneratedAt').textContent = meta.generatedAt ? `สร้างข้อมูลเมื่อ ${timeText(meta.generatedAt)}` : '';
-      document.getElementById('summaryList').innerHTML = [
-        ['สถานะ', meta.resultStatus || '-'],
-        ['นับแล้ว', `${numberText(summary.countedUnits)} / ${numberText(summary.totalUnits)} เขต`],
-        ['ความคืบหน้า', summary.countedPercentage != null ? `${summary.countedPercentage}%` : '-'],
-        ['ผู้มีสิทธิ', numberText(summary.eligibleVoters)],
-        ['ผู้มาใช้สิทธิ', numberText(summary.voterTurnout)],
-        ['บัตรดี', numberText(summary.validBallots)],
-        ['บัตรเสีย', numberText(summary.invalidBallots)],
-        ['Vote No', numberText(summary.abstainedBallots)],
-        ['อัปเดตล่าสุด', timeText(summary.lastUpdatedAt)],
-      ].map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join('');
-
-      document.getElementById('leaderboard').innerHTML = candidates.length
-        ? candidates.map((candidate) => {
-            const pct = Math.max(0, Math.min(100, Number(candidate.votePercentage || 0)));
-            const color = candidate.color || '#475569';
-            return `<div class="leader">
-              <strong>#${candidate.rank ?? '-'}</strong>
-              <div class="candidate-name">
-                <span class="swatch" style="background:${color}"></span>${candidate.name || candidate.candidateId || `หมายเลข ${candidate.candidateNumber}`}
-                <div class="bar"><span style="width:${pct}%; background:${color}"></span></div>
-              </div>
-              <strong>${numberText(candidate.voteCount)}</strong>
-              <span class="percent muted">${candidate.votePercentage ?? 0}%</span>
-            </div>`;
-          }).join('')
-        : '<div class="muted">ยังไม่มีคะแนนรวม</div>';
-    }
-    function setInputValue(id, value) {
-      const element = document.getElementById(id);
-      if (element) element.value = value ?? '';
-    }
-    const dataModeText = {
-      latest_snapshot: 'ใช้ยอดล่าสุดของแต่ละเขต เหมาะกับรูปที่เป็นยอดรวม ณ เวลานั้น',
-      incremental_delta: 'บวกทุกรอบที่ approved ในเขต เหมาะเมื่อรูปแต่ละรอบเป็นยอดเพิ่มเฉพาะรอบ',
-    };
-    function updateDataModeDescription() {
-      const mode = document.getElementById('dataModeSelect').value;
-      document.getElementById('dataModeDescription').textContent = dataModeText[mode] || '';
-    }
-    function populateOverrideForms() {
-      const pageMeta = state.overrides?.pageMeta || {};
-      const dataMode = state.overrides?.dataMode?.mode || state.summary?.dataInterpretation?.mode || 'latest_snapshot';
-      setInputValue('overrideTitle', pageMeta.title || state.summary?.pageMeta?.title || '');
-      setInputValue('overrideResultStatus', pageMeta.resultStatus || '');
-      setInputValue('dataModeSelect', dataMode);
-      updateDataModeDescription();
-      document.getElementById('overrideStatus').textContent = state.overrides
-        ? 'โหลดค่า override แล้ว'
-        : '';
-    }
-    function setPageMetaEditorOpen(open) {
-      const editor = document.getElementById('pageMetaEditor');
-      const toggle = document.getElementById('togglePageMetaEditor');
-      editor.classList.toggle('is-collapsed', !open);
-      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-      toggle.textContent = open ? 'ปิด' : 'เปิดแก้ไข';
-    }
-    function numericFormValue(id) {
-      const raw = document.getElementById(id).value.trim();
-      return raw === '' ? undefined : Number(raw);
-    }
-    async function submitPageMeta(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      try {
-        showError('');
-        showNotice('กำลังบันทึกข้อมูลหน้ารวม...');
-        setSubmitState(form, true, 'กำลังบันทึก...');
-        const payload = {
-          title: document.getElementById('overrideTitle').value.trim(),
-          resultStatus: document.getElementById('overrideResultStatus').value,
-          actor: document.getElementById('pageMetaActor').value.trim() || 'operator',
-          reason: document.getElementById('pageMetaReason').value.trim() || 'manual correction',
-        };
-        if (!payload.resultStatus) delete payload.resultStatus;
-        await patchJson('/api/v1/monitor/page-meta', payload);
-        await refresh();
-        showNotice('บันทึกข้อมูลหน้ารวมสำเร็จ');
-      } catch (error) {
-        showError(`บันทึกข้อมูลหน้ารวมไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function submitDataMode(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      try {
-        showError('');
-        const payload = {
-          mode: form.elements.mode.value,
-          actor: document.getElementById('dataModeActor').value.trim() || 'operator',
-          reason: document.getElementById('dataModeReason').value.trim() || 'เลือกวิธีรวมข้อมูลวันจริง',
-        };
-        await patchJson('/api/v1/monitor/data-mode', payload);
-        await refresh();
-      } catch (error) {
-        showError(`บันทึกวิธีดึงข้อมูลไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function submitSummary(event) {
-      event.preventDefault();
-      try {
-        showError('');
-        const payload = {
-          actor: document.getElementById('summaryActor').value.trim() || 'operator',
-          reason: document.getElementById('summaryReason').value.trim() || 'manual correction',
-        };
-        const fields = [
-          ['eligibleVoters', 'overrideEligibleVoters'],
-          ['voterTurnout', 'overrideVoterTurnout'],
-          ['validBallots', 'overrideValidBallots'],
-          ['invalidBallots', 'overrideInvalidBallots'],
-          ['abstainedBallots', 'overrideAbstainedBallots'],
-        ];
-        for (const [field, id] of fields) {
-          const value = numericFormValue(id);
-          if (value !== undefined) payload[field] = value;
-        }
-        await patchJson('/api/v1/monitor/summary', payload);
-        await refresh();
-      } catch (error) {
-        showError(`บันทึกข้อมูลสรุปไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    function rowMatches(district) {
-      const q = document.getElementById('search').value.trim().toLowerCase();
-      const status = document.getElementById('statusFilter').value;
-      const text = [
-        district.areaId,
-        district.districtCode,
-        district.districtNameTh,
-        district.districtNameEn,
-      ].join(' ').toLowerCase();
-      return (!q || text.includes(q)) && (status === 'all' || district.status === status);
-    }
-    function renderRows() {
-      const rows = state.districts.filter(rowMatches).map((district) => {
-        const notes = [
-          ...(district.missingFields || []).map(fieldText),
-          ...(district.warnings || []).map(warningText),
-        ];
-        return `<tr>
-          <td><strong>${district.districtNameTh || '-'}</strong><div class="muted">${district.areaId} · ${district.districtCode || '-'}</div></td>
-          <td>${district.submissionCount ?? 0}</td>
-          <td>${district.approvedSubmissionCount ?? 0}</td>
-          <td>${timeText(district.latestApprovedAt)}</td>
-          <td><span class="status ${district.status}">${statusText(district.status)}</span></td>
-          <td class="wrap">${notes.length ? notes.join('<br>') : '<span class="muted">-</span>'}</td>
-          <td><button class="secondary" data-area="${district.areaId}">รายละเอียด</button></td>
-        </tr>`;
-      }).join('');
-      document.getElementById('rows').innerHTML = rows || '<tr><td colspan="7" class="muted">ไม่พบเขตที่ตรงกับเงื่อนไข</td></tr>';
-      document.querySelectorAll('button[data-area]').forEach((button) => {
-        button.addEventListener('click', () => loadDetail(button.dataset.area));
-      });
-    }
-    function datetimeLocalValue(value) {
-      const date = value ? new Date(value) : new Date();
-      if (Number.isNaN(date.getTime())) return '';
-      const offset = date.getTimezoneOffset() * 60000;
-      return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-    }
-    function candidateInputs(scores = []) {
-      const scoreMap = new Map((scores || []).map((item) => [Number(item.candidate_number ?? item.candidateNumber), item.score ?? 0]));
-      const numbers = new Set([
-        ...Array.from(scoreMap.keys()).filter(Boolean),
-        ...(state.summary?.candidates || []).map((item) => Number(item.candidateNumber)).filter(Boolean),
-      ]);
-      if (!numbers.size) numbers.add(1);
-      return Array.from(numbers).sort((a, b) => a - b).map((candidateNumber) => {
-        const candidate = (state.summary?.candidates || []).find((item) => Number(item.candidateNumber) === candidateNumber) || {};
-        const label = candidate.name || `ผู้สมัครเบอร์ ${candidateNumber}`;
-        return `<label>${label}<input name="candidate_${candidateNumber}" type="number" min="0" step="1" value="${scoreMap.get(candidateNumber) ?? 0}"></label>`;
-      }).join('');
-    }
-    function roundNumberInputs(roundItem = {}) {
-      return `<div class="form-row">
-          <label>ลำดับรอบ<input name="position" type="number" step="1" value="${roundItem.position ?? 100000}"></label>
-          <label>เวลารายงาน<input name="reportedAt" type="datetime-local" value="${datetimeLocalValue(roundItem.reportedAt)}"></label>
-        </div>
-        <div class="form-row">
-          <label>ผู้มีสิทธิ<input name="eligibleVoters" type="number" min="0" step="1" value="${roundItem.eligibleVoters ?? ''}"></label>
-          <label>ผู้มาใช้สิทธิ<input name="voterTurnout" type="number" min="0" step="1" value="${roundItem.voterTurnout ?? ''}"></label>
-        </div>
-        <div class="form-row">
-          <label>บัตรดี<input name="validBallots" type="number" min="0" step="1" value="${roundItem.validBallots ?? ''}"></label>
-          <label>บัตรเสีย<input name="invalidBallots" type="number" min="0" step="1" value="${roundItem.invalidBallots ?? ''}"></label>
-        </div>
-        <label>Vote No<input name="abstainedBallots" type="number" min="0" step="1" value="${roundItem.abstainedBallots ?? ''}"></label>`;
-    }
-    function roundEditPayload(roundItem) {
-      return {
-        position: roundItem.position,
-        reportedAt: roundItem.reportedAt,
-        candidateScores: roundItem.candidateScores || [],
-        eligibleVoters: roundItem.eligibleVoters,
-        voterTurnout: roundItem.voterTurnout,
-        validBallots: roundItem.validBallots,
-        invalidBallots: roundItem.invalidBallots,
-        abstainedBallots: roundItem.abstainedBallots,
-      };
-    }
-    function renderRoundEditor(roundItem) {
-      const deletedText = roundItem.deleted ? ' · deleted' : '';
-      return `<details class="panel round-card">
-        <summary class="panel-head">
-          <strong>${roundItem.roundId}${deletedText}</strong>
-          <div class="muted">${timeText(roundItem.reportedAt)} · position ${roundItem.position ?? '-'}</div>
-          <span class="round-summary-action">เปิดแก้ไข</span>
-        </summary>
-        <form class="edit-form roundEditForm" data-area="${roundItem.areaId}" data-round="${roundItem.roundId}" style="padding:12px">
-          <div class="round-layout">
-            <section class="round-zone">
-          <strong>คะแนนผู้สมัคร</strong>
-          <div class="candidate-grid">${candidateInputs(roundItem.candidateScores)}</div>
-            </section>
-            <section class="round-zone">
-              <strong>ข้อมูลสรุปรอบนี้</strong>
-          ${roundNumberInputs(roundItem)}
-          <div class="form-row">
-            <label>ผู้แก้<input name="actor" type="text" value="operator"></label>
-            <label>เหตุผล<input name="reason" type="text" placeholder="แก้ข้อมูลรอบนี้"></label>
-          </div>
-            </section>
-          </div>
-          <div class="toolbar">
-            <button type="submit">บันทึกรอบนี้</button>
-            <button type="button" class="secondary deleteRound" data-area="${roundItem.areaId}" data-round="${roundItem.roundId}">ลบรอบนี้</button>
-          </div>
-        </form>
-      </details>`;
-    }
-    function renderNewRoundPayload() {
-      return JSON.stringify({
-        position: 100000,
-        reportedAt: new Date().toISOString(),
-        candidateScores: [{candidateNumber: 1, score: 0}],
-        voterTurnout: 0,
-        validBallots: 0,
-        invalidBallots: 0,
-        abstainedBallots: 0,
-      }, null, 2);
-    }
-    function closeDetail() {
-      const el = document.getElementById('detail');
-      el.style.display = 'none';
-      el.innerHTML = '';
-      document.body.classList.remove('modal-open');
-      state.selected = null;
-    }
-    async function loadDetail(areaId) {
-      try {
-        showError('');
-        const detail = await fetchJson(`/api/v1/monitor/districts/${encodeURIComponent(areaId)}`);
-        const el = document.getElementById('detail');
-        const latest = detail.latestApprovedResult || {};
-        const override = detail.summaryOverride || {};
-        const fieldValue = (camel, snake) => override[camel] ?? latest[snake] ?? '';
-        state.selected = areaId;
-        document.body.classList.add('modal-open');
-        el.style.display = 'block';
-        el.innerHTML = `
-          <div class="detail-card" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
-          <div class="detail-head">
-            <strong id="detailTitle">${detail.districtNameTh || areaId}</strong>
-            <button type="button" class="secondary icon-button" id="closeDetail" aria-label="Close">&times;</button>
-          </div>
-          <div class="detail-body">
-          <form class="edit-form" id="districtSummaryForm" data-area="${areaId}" style="margin:12px 0">
-            <div class="form-row">
-              <label>ผู้มีสิทธิ
-                <input name="eligibleVoters" type="number" min="0" step="1" value="${fieldValue('eligibleVoters', 'eligible_voters')}">
-              </label>
-              <label>ผู้มาใช้สิทธิ
-                <input name="voterTurnout" type="number" min="0" step="1" value="${fieldValue('voterTurnout', 'voter_turnout')}">
-              </label>
-            </div>
-            <div class="form-row">
-              <label>บัตรดี
-                <input name="validBallots" type="number" min="0" step="1" value="${fieldValue('validBallots', 'valid_ballots')}">
-              </label>
-              <label>บัตรเสีย
-                <input name="invalidBallots" type="number" min="0" step="1" value="${fieldValue('invalidBallots', 'invalid_ballots')}">
-              </label>
-            </div>
-            <div class="form-row">
-              <label>Vote No
-                <input name="abstainedBallots" type="number" min="0" step="1" value="${fieldValue('abstainedBallots', 'abstained_ballots')}">
-              </label>
-              <label>ผู้แก้
-                <input name="actor" type="text" value="operator">
-              </label>
-            </div>
-            <label>เหตุผล
-              <input name="reason" type="text" placeholder="manual correction">
-            </label>
-            <button type="submit">บันทึกข้อมูลเขตนี้</button>
-          </form>
-          <details class="panel round-card">
-            <summary class="panel-head">
-              <strong>เพิ่ม / แก้ไขข้อมูลรายรอบ</strong>
-              <span class="muted">${detail.dataInterpretation?.mode || '-'}</span>
-              <span class="round-summary-action">เปิดเพิ่มรอบ</span>
-            </summary>
-            <form class="edit-form" id="newRoundForm" data-area="${areaId}" style="padding:12px">
-              <div class="round-layout">
-                <section class="round-zone">
-              <strong>คะแนนผู้สมัคร</strong>
-              <div class="candidate-grid">${candidateInputs([])}</div>
-                </section>
-                <section class="round-zone">
-                  <strong>ข้อมูลสรุปรอบใหม่</strong>
-              ${roundNumberInputs({position: 100000, reportedAt: new Date().toISOString()})}
-              <div class="form-row">
-                <label>ผู้แก้<input name="actor" type="text" value="operator"></label>
-                <label>เหตุผล<input name="reason" type="text" placeholder="เพิ่มรอบใหม่หรือแทรกระหว่างรอบ"></label>
-              </div>
-              <button type="submit">เพิ่มรอบใหม่</button>
-                </section>
-              </div>
-            </form>
-          </details>
-          ${(detail.rounds || []).map(renderRoundEditor).join('')}
-          <details>
-            <summary>ข้อมูลเทคนิค</summary>
-            <pre>${JSON.stringify(detail, null, 2)}</pre>
-          </details>
-          </div>
-          </div>`;
-        document.getElementById('closeDetail').addEventListener('click', closeDetail);
-        document.getElementById('districtSummaryForm').addEventListener('submit', submitDistrictSummary);
-        document.getElementById('newRoundForm').addEventListener('submit', submitNewRound);
-        document.querySelectorAll('.roundEditForm').forEach((form) => form.addEventListener('submit', submitRoundEdit));
-        document.querySelectorAll('.deleteRound').forEach((button) => button.addEventListener('click', deleteRound));
-      } catch (error) {
-        showError(`โหลดรายละเอียดเขตไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function submitDistrictSummary(event) {
-      event.preventDefault();
-      try {
-        showError('');
-        const form = event.currentTarget;
-        const areaId = form.dataset.area;
-        const payload = {
-          actor: form.elements.actor.value.trim() || 'operator',
-          reason: form.elements.reason.value.trim() || 'manual correction',
-        };
-        for (const field of ['eligibleVoters', 'voterTurnout', 'validBallots', 'invalidBallots', 'abstainedBallots']) {
-          const raw = form.elements[field].value.trim();
-          if (raw !== '') payload[field] = Number(raw);
-        }
-        await patchJson(`/api/v1/monitor/districts/${encodeURIComponent(areaId)}/summary`, payload);
-        await refresh();
-        await loadDetail(areaId);
-      } catch (error) {
-        showError(`บันทึกข้อมูลเขตไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    function parseRoundPayload(form) {
-      const payload = {candidateScores: []};
-      for (const element of Array.from(form.elements)) {
-        if (!element.name || element.name === 'actor' || element.name === 'reason') continue;
-        if (element.name.startsWith('candidate_')) {
-          payload.candidateScores.push({
-            candidateNumber: Number(element.name.replace('candidate_', '')),
-            score: Number(element.value || 0),
-          });
-        } else if (element.name === 'reportedAt') {
-          payload.reportedAt = element.value ? new Date(element.value).toISOString() : new Date().toISOString();
-        } else if (element.value !== '') {
-          payload[element.name] = Number(element.value);
-        }
-      }
-      payload.actor = form.elements.actor.value.trim() || 'operator';
-      payload.reason = form.elements.reason.value.trim() || 'manual round update';
-      return payload;
-    }
-    async function submitNewRound(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const areaId = form.dataset.area;
-      try {
-        showError('');
-        await postJson(`/api/v1/monitor/districts/${encodeURIComponent(areaId)}/rounds`, parseRoundPayload(form));
-        await refresh();
-        await loadDetail(areaId);
-      } catch (error) {
-        showError(`บันทึกรอบใหม่ไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function submitRoundEdit(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const areaId = form.dataset.area;
-      const roundId = form.dataset.round;
-      try {
-        showError('');
-        await patchJson(`/api/v1/monitor/districts/${encodeURIComponent(areaId)}/rounds/${encodeURIComponent(roundId)}`, parseRoundPayload(form));
-        await refresh();
-        await loadDetail(areaId);
-      } catch (error) {
-        showError(`บันทึกรอบไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function deleteRound(event) {
-      const areaId = event.currentTarget.dataset.area;
-      const roundId = event.currentTarget.dataset.round;
-      try {
-        showError('');
-        await deleteJson(`/api/v1/monitor/districts/${encodeURIComponent(areaId)}/rounds/${encodeURIComponent(roundId)}`, {
-          actor: 'operator',
-          reason: 'delete round from monitor',
-        });
-        await refresh();
-        await loadDetail(areaId);
-      } catch (error) {
-        showError(`ลบรอบไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    async function refresh() {
-      try {
-        showError('');
-        const [overview, districts, summary, overrides] = await Promise.all([
-          fetchJson('/api/v1/monitor/overview'),
-          fetchJson('/api/v1/monitor/districts'),
-          fetchJson('/api/v1/governor-results/summary'),
-          fetchJson('/api/v1/monitor/overrides'),
-        ]);
-        state.overview = overview;
-        state.districts = districts.districts || [];
-        state.summary = summary;
-        state.overrides = overrides;
-        renderOverview();
-        renderDashboard();
-        populateOverrideForms();
-        renderRows();
-      } catch (error) {
-        showError(`โหลดข้อมูล monitor ไม่สำเร็จ: ${error.message}`);
-      }
-    }
-    document.getElementById('saveKey').addEventListener('click', () => {
-      localStorage.setItem('monitorApiKey', keyInput.value.trim());
-      refresh();
-    });
-    document.addEventListener('submit', (event) => {
-      if (event.target.matches('#pageMetaForm, #dataModeForm, #districtSummaryForm, #newRoundForm, .roundEditForm')) {
-        setSubmitState(event.target, true, 'กำลังบันทึก...');
-      }
-    }, true);
-    document.getElementById('refresh').addEventListener('click', refresh);
-    document.getElementById('pageMetaForm').addEventListener('submit', submitPageMeta);
-    document.getElementById('dataModeForm').addEventListener('submit', submitDataMode);
-    document.getElementById('dataModeSelect').addEventListener('change', updateDataModeDescription);
-    document.getElementById('togglePageMetaEditor').addEventListener('click', () => {
-      const editor = document.getElementById('pageMetaEditor');
-      setPageMetaEditorOpen(editor.classList.contains('is-collapsed'));
-    });
-    document.getElementById('detail').addEventListener('click', (event) => {
-      if (event.target.id === 'detail') closeDetail();
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && state.selected) closeDetail();
-    });
-    document.getElementById('search').addEventListener('input', renderRows);
-    document.getElementById('statusFilter').addEventListener('change', renderRows);
-    refresh();
-  </script>
-</body>
-</html>
-"""
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -2599,82 +2431,684 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-def monitor_districts_response(*, use_cache: bool = True) -> dict[str, Any]:
-    global _monitor_cache_at, _monitor_cache_payload
-    now = monotonic()
-    if use_cache and _monitor_cache_payload and now - _monitor_cache_at < _monitor_cache_seconds:
-        return _monitor_cache_payload
+MONITOR_HTML = """<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Governor Results Monitor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4efe7;
+      --panel: #fffaf2;
+      --ink: #1f2a37;
+      --muted: #5b6470;
+      --line: #d8cdbb;
+      --accent: #0d6c63;
+      --accent-2: #c26a2e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: radial-gradient(circle at top left, #fff8ee, var(--bg) 58%);
+      color: var(--ink);
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+    .hero {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(13,108,99,0.92), rgba(194,106,46,0.92));
+      color: #fffef8;
+      box-shadow: 0 18px 50px rgba(22, 32, 43, 0.12);
+    }
+    .hero h1 { margin: 0 0 10px; font-size: 30px; }
+    .hero p { margin: 0; line-height: 1.6; max-width: 760px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(39, 48, 61, 0.06);
+    }
+    h2 { margin: 0 0 14px; font-size: 18px; }
+    label { display: block; margin: 0 0 12px; font-weight: 600; }
+    .hint, .status { color: var(--muted); font-size: 14px; line-height: 1.5; }
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+      background: #fff;
+      color: inherit;
+    }
+    textarea { min-height: 150px; resize: vertical; }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      color: white;
+      background: var(--accent);
+    }
+    button.secondary { background: var(--accent-2); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      min-height: 180px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 999px;
+      padding: 8px 12px;
+      margin-top: 14px;
+      font-size: 13px;
+      background: rgba(255,255,255,0.08);
+    }
+    fieldset {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 0 0 12px;
+    }
+    fieldset label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    fieldset legend {
+      padding: 0 6px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Governor Results Monitor</h1>
+      <p>ใช้หน้านี้เพื่อเปลี่ยน external endpoint สำหรับผลผู้ว่าฯ กรุงเทพฯ แบบ runtime, บันทึก config ลง S3 และสั่งดึงข้อมูลเพื่อ export ไฟล์ public JSON ได้ทันที</p>
+      <div class="pill" id="effectiveBadge">Loading current config...</div>
+    </section>
+    <div class="grid">
+      <section class="panel">
+        <h2>Auto Fetch Schedule</h2>
+        <div class="row">
+          <label>Auto Fetch Every (seconds)
+            <input id="scheduleIntervalSeconds" type="number" min="10" step="10" value="300">
+          </label>
+          <label>Time Remaining
+            <input id="countdownText" type="text" disabled value="หยุดแล้ว">
+          </label>
+        </div>
+        <p class="status" id="scheduleStatusText">สถานะ: หยุดแล้ว</p>
+        <div class="actions">
+          <button id="startScheduleButton">เริ่มนับ</button>
+          <button id="stopScheduleButton" class="secondary" disabled>หยุด</button>
+          <button id="resumeScheduleButton" class="secondary" disabled>นับใหม่</button>
+        </div>
+        <h2>จำลองข้อมูล กทม (Mock Endpoint)</h2>
+        <p class="hint">เขียนข้อมูลใหม่ทับ S3 endpoint-mock ก่อน Auto Fetch ดึง — ช่วง Mock ต้องสั้นกว่า Auto Fetch อย่างน้อย 2 วินาที — คะแนนสลับอันดับทุก tick แบบผันผวนสูง</p>
+        <label>Mock ทุก (วินาที)
+          <input id="mockIntervalSeconds" type="number" min="5" step="1" value="8">
+        </label>
+        <p class="status" id="mockStatusText">สถานะจำลอง: หยุดแล้ว</p>
+        <div class="actions">
+          <button id="startMockButton">เริ่มจำลอง</button>
+          <button id="stopMockButton" class="secondary" disabled>หยุดจำลอง</button>
+        </div>
+        <h2>Source Config (ผู้ว่าฯ)</h2>
+        <label>API Key
+          <input id="apiKey" type="text" placeholder="RESULTS_API_KEY">
+        </label>
+        <label>
+          <input id="enabled" type="checkbox" checked>
+          เปิดใช้ governor endpoint
+        </label>
+        <label>Governor Endpoint URL
+          <input id="url" type="text" placeholder="https://example.com/69-governor-electiondata.json">
+        </label>
+        <h2>Source Config (ส.ก. / BMC)</h2>
+        <label>
+          <input id="bmcEnabled" type="checkbox">
+          เปิดใช้ BMC endpoint
+        </label>
+        <label>BMC Endpoint URL
+          <input id="bmcUrl" type="text" placeholder="https://bangkokvote69.bangkok.go.th/results/69-bmc-electiondata.json">
+        </label>
+        <label>Sorkor Export Prefix
+          <input id="sorkorExportPrefix" type="text" disabled>
+        </label>
+        <p class="hint">sumary-sorkor.json และ districts-sorkor.json เขียนไป governor-results-bkk แล้ว promote ไป governor-results เมื่อเลือก กทม</p>
+        <fieldset id="activePublicSourceFieldset">
+          <legend>แหล่งข้อมูล live สำหรับ governor-results</legend>
+          <label>
+            <input type="radio" name="activePublicSource" id="activePublicSourceLine" value="line" checked>
+            LINE → governor-results-dev
+          </label>
+          <label>
+            <input type="radio" name="activePublicSource" id="activePublicSourceBkk" value="bkk">
+            กทม → governor-results-bkk
+          </label>
+        </fieldset>
+        <p class="hint">เลือกว่า frontend จะอ่าน sumary.json / districts.json จากแหล่งไหน (copy ไป governor-results)</p>
+        <label>Live Export Prefix
+          <input id="liveExportPrefix" type="text" disabled>
+        </label>
+        <label>Raw Export Prefix (เก็บที่ bkk เท่านั้น)
+          <input id="rawExportPrefix" type="text" disabled>
+        </label>
+        <p class="hint">raw/latest.json และ raw/history/*.json จะเขียนไปที่ governor-results-bkk เสมอ</p>
+        <div class="row">
+          <label>Governor Timeout Seconds
+            <input id="timeoutSeconds" type="number" min="0.1" step="0.1" value="10">
+          </label>
+          <label>BMC Timeout Seconds
+            <input id="bmcTimeoutSeconds" type="number" min="0.1" step="0.1" value="10">
+          </label>
+          <label>Current Mode
+            <input id="sourceMode" type="text" disabled>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="saveButton">บันทึก</button>
+          <button id="fetchButton" class="secondary">ดึงข้อมูล</button>
+        </div>
+        <p class="status" id="statusText">พร้อมใช้งาน</p>
+      </section>
+      <section class="panel">
+        <h2>Fetch Result</h2>
+        <pre id="resultBox">รอการดึงข้อมูล...</pre>
+      </section>
+    </div>
+  </main>
+  <script>
+    const apiKeyInput = document.getElementById("apiKey");
+    const enabledInput = document.getElementById("enabled");
+    const urlInput = document.getElementById("url");
+    const bmcEnabledInput = document.getElementById("bmcEnabled");
+    const bmcUrlInput = document.getElementById("bmcUrl");
+    const bmcTimeoutInput = document.getElementById("bmcTimeoutSeconds");
+    const sorkorExportPrefixInput = document.getElementById("sorkorExportPrefix");
+    const timeoutInput = document.getElementById("timeoutSeconds");
+    const sourceModeInput = document.getElementById("sourceMode");
+    const activePublicSourceLine = document.getElementById("activePublicSourceLine");
+    const activePublicSourceBkk = document.getElementById("activePublicSourceBkk");
+    const liveExportPrefixInput = document.getElementById("liveExportPrefix");
+    const rawExportPrefixInput = document.getElementById("rawExportPrefix");
+    const scheduleIntervalInput = document.getElementById("scheduleIntervalSeconds");
+    const countdownText = document.getElementById("countdownText");
+    const scheduleStatusText = document.getElementById("scheduleStatusText");
+    const startScheduleButton = document.getElementById("startScheduleButton");
+    const stopScheduleButton = document.getElementById("stopScheduleButton");
+    const resumeScheduleButton = document.getElementById("resumeScheduleButton");
+    const mockIntervalInput = document.getElementById("mockIntervalSeconds");
+    const mockStatusText = document.getElementById("mockStatusText");
+    const startMockButton = document.getElementById("startMockButton");
+    const stopMockButton = document.getElementById("stopMockButton");
+    const statusText = document.getElementById("statusText");
+    const resultBox = document.getElementById("resultBox");
+    const effectiveBadge = document.getElementById("effectiveBadge");
+    let scheduleEnabled = false;
+    let scheduleNextRunAt = null;
+    let countdownTimer = null;
+    let schedulePollTimer = null;
+    let schedulePollInFlight = false;
+    let lastZeroPollAt = 0;
+    let mockEnabled = false;
+    const SCHEDULE_POLL_INTERVAL_MS = 3000;
+    apiKeyInput.value = localStorage.getItem("resultsApiKey") || "";
 
-    with _monitor_cache_lock:
-        now = monotonic()
-        if use_cache and _monitor_cache_payload and now - _monitor_cache_at < _monitor_cache_seconds:
-            return _monitor_cache_payload
+    function requestHeaders() {
+      const headers = { "Content-Type": "application/json" };
+      const key = apiKeyInput.value.trim();
+      if (key) {
+        headers["X-API-Key"] = key;
+      }
+      return headers;
+    }
 
-        payload = _build_monitor_districts_response()
-        _monitor_cache_payload = payload
-        _monitor_cache_at = monotonic()
-        return payload
+    async function fetchJson(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: { ...requestHeaders(), ...(options.headers || {}) },
+      });
+      const text = await response.text();
+      const payload = text ? JSON.parse(text) : {};
+      if (!response.ok) {
+        throw new Error(payload.detail || text || ("HTTP " + response.status));
+      }
+      return payload;
+    }
 
+    function setBusy(isBusy) {
+      document.getElementById("saveButton").disabled = isBusy;
+      document.getElementById("fetchButton").disabled = isBusy;
+      updateScheduleButtons(isBusy);
+      updateMockButtons(isBusy);
+    }
 
-def _build_monitor_districts_response() -> dict[str, Any]:
-    try:
-        districts_by_id = district_catalog.districts_by_id()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="District master data is unavailable") from exc
-    try:
-        candidates_by_number = candidate_catalog.candidates_by_number()
-    except Exception:
-        candidates_by_number = {}
+    function updateMockButtons(isBusy) {
+      const busy = Boolean(isBusy);
+      startMockButton.disabled = busy || mockEnabled;
+      stopMockButton.disabled = busy || !mockEnabled;
+    }
 
-    area_indexes = {}
-    raw_approved_results_by_area = {}
-    approved_results_by_area = {}
-    bangkok_area_ids = [
-        str(district.get("id"))
-        for district in districts_by_id.values()
-        if district.get("provinceCode") == 10 and district.get("id") is not None
-    ]
-    try:
-        mode = current_data_mode()
-        indexed_area_ids = set(store.list_area_indexes(settings.source_election_id))
-    except BotoCoreError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"S3 data is unavailable. Check AWS credentials/session and RESULTS_API_S3_BUCKET. {exc}",
-        ) from exc
+    function updateScheduleButtons(isBusy) {
+      const busy = Boolean(isBusy);
+      startScheduleButton.disabled = busy || scheduleEnabled;
+      stopScheduleButton.disabled = busy || !scheduleEnabled;
+      resumeScheduleButton.disabled = busy || scheduleEnabled;
+    }
 
-    for area_id in bangkok_area_ids:
-        if area_id in indexed_area_ids:
-            try:
-                index = store.area_submissions(settings.source_election_id, area_id) or {}
-                raw_approved_results = store.approved_results_for_area(settings.source_election_id, area_id)
-                _, effective_results = apply_round_overrides(
-                    area_id,
-                    raw_approved_results,
-                )
-                approved_results = apply_district_summary_overrides(effective_results)
-            except BotoCoreError as exc:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"S3 data is unavailable. Check AWS credentials/session and RESULTS_API_S3_BUCKET. {exc}",
-                ) from exc
-        else:
-            index = {}
-            raw_approved_results = []
-            approved_results = []
-        area_indexes[area_id] = index
-        raw_approved_results_by_area[area_id] = raw_approved_results
-        approved_results_by_area[area_id] = approved_results
+    function formatRemaining(seconds) {
+      if (seconds === null || seconds === undefined) {
+        return "—";
+      }
+      const total = Math.max(0, Math.floor(seconds));
+      const minutes = Math.floor(total / 60);
+      const remainder = total % 60;
+      return String(minutes).padStart(2, "0") + ":" + String(remainder).padStart(2, "0");
+    }
 
-    return build_monitor_districts(
-        district_catalog=districts_by_id,
-        area_indexes=area_indexes,
-        approved_results_by_area=interpreted_results_by_area(approved_results_by_area, mode),
-        raw_approved_results_by_area=raw_approved_results_by_area,
-        candidate_catalog=candidates_by_number,
-        election_id=settings.election_id,
-        delayed_after_minutes=settings.delayed_after_minutes,
-    )
+    function selectedActivePublicSource() {
+      return activePublicSourceBkk.checked ? "bkk" : "line";
+    }
+
+    function setActivePublicSource(source) {
+      const normalized = source === "bkk" ? "bkk" : "line";
+      activePublicSourceLine.checked = normalized === "line";
+      activePublicSourceBkk.checked = normalized === "bkk";
+    }
+
+    function validateMockAndFetchIntervals() {
+      const mockInterval = Number(mockIntervalInput.value || 8);
+      const fetchInterval = Number(scheduleIntervalInput.value || 300);
+      if (fetchInterval <= mockInterval) {
+        throw new Error("Auto Fetch Every ต้องมากกว่า Mock ทุก (วินาที)");
+      }
+      if (fetchInterval - mockInterval < 2) {
+        throw new Error("Auto Fetch ต้องมากกว่า Mock อย่างน้อย 2 วินาที");
+      }
+    }
+
+    function renderMockState(mock) {
+      mockEnabled = Boolean(mock && mock.enabled);
+      if (mock && mock.intervalSeconds) {
+        mockIntervalInput.value = mock.intervalSeconds;
+      }
+      if (!mockEnabled) {
+        mockStatusText.textContent = "สถานะจำลอง: หยุดแล้ว";
+      } else {
+        const opened = (mock && mock.openedCount) || 0;
+        const total = (mock && mock.totalDistricts) || 0;
+        const progress = (mock && mock.lastProgress) || 0;
+        mockStatusText.textContent =
+          "สถานะจำลอง: กำลังทำงาน | เขต " + opened + "/" + total +
+          " | progress " + progress + "%" +
+          (mock && mock.nextRunAt ? " | tick ถัดไป " + new Date(mock.nextRunAt).toLocaleTimeString("th-TH") : "");
+      }
+      updateMockButtons(false);
+    }
+
+    function activePublicSourceSummary(activePublicSource) {
+      const source = (activePublicSource && activePublicSource.source) || "line";
+      const livePrefix = (activePublicSource && activePublicSource.livePrefix) || "api-data/governor-results";
+      return "live=" + source + " (" + livePrefix + ")";
+    }
+
+    function updateEffectiveBadge(config, bmcConfig, activePublicSource, rawExportTarget, sorkorExportTarget) {
+      effectiveBadge.textContent =
+        "Governor: " + ((config && config.source) || "none") +
+        " | " + ((config && config.url) || "disabled") +
+        " | BMC: " + ((bmcConfig && bmcConfig.source) || "none") +
+        " | " + ((bmcConfig && bmcConfig.url) || "disabled") +
+        " | " + activePublicSourceSummary(activePublicSource) +
+        " | sorkor-bkk=" + ((sorkorExportTarget && sorkorExportTarget.prefix) || "api-data/governor-results-bkk");
+    }
+
+    function renderActivePublicSource(activePublicSource, rawExportTarget, sorkorExportTarget) {
+      if (activePublicSource) {
+        setActivePublicSource(activePublicSource.source || "line");
+        liveExportPrefixInput.value = activePublicSource.livePrefix || "";
+      }
+      rawExportPrefixInput.value = (rawExportTarget && rawExportTarget.prefix) || "api-data/governor-results-bkk";
+      sorkorExportPrefixInput.value = (sorkorExportTarget && sorkorExportTarget.prefix) || "api-data/governor-results-bkk";
+    }
+
+    function renderBmcConfig(bmcConfig) {
+      const config = bmcConfig || {};
+      bmcEnabledInput.checked = Boolean(config.enabled);
+      bmcUrlInput.value = config.url || "";
+      bmcTimeoutInput.value = config.timeoutSeconds || 10;
+    }
+
+    function updateCountdownDisplay() {
+      if (!scheduleEnabled) {
+        countdownText.value = "หยุดแล้ว";
+        scheduleStatusText.textContent = "สถานะ: หยุดแล้ว";
+        return;
+      }
+      let remainingSeconds = null;
+      if (scheduleNextRunAt) {
+        remainingSeconds = Math.max(0, Math.floor((Date.parse(scheduleNextRunAt) - Date.now()) / 1000));
+      }
+      countdownText.value = formatRemaining(remainingSeconds);
+      scheduleStatusText.textContent =
+        "สถานะ: กำลังนับเวลา" +
+        (scheduleNextRunAt ? " | ครั้งถัดไป " + new Date(scheduleNextRunAt).toLocaleString("th-TH") : "");
+      if (remainingSeconds === 0 && Date.now() - lastZeroPollAt > 2000) {
+        lastZeroPollAt = Date.now();
+        refreshScheduleFromServer({ updateResultBox: true });
+      }
+    }
+
+    function ensureCountdownTimer() {
+      if (countdownTimer) {
+        return;
+      }
+      updateCountdownDisplay();
+      countdownTimer = setInterval(updateCountdownDisplay, 1000);
+    }
+
+    function stopSchedulePolling() {
+      if (schedulePollTimer) {
+        clearInterval(schedulePollTimer);
+        schedulePollTimer = null;
+      }
+    }
+
+    function startSchedulePolling() {
+      stopSchedulePolling();
+      if (!scheduleEnabled) {
+        return;
+      }
+      schedulePollTimer = setInterval(() => {
+        refreshScheduleFromServer({ updateResultBox: true });
+      }, SCHEDULE_POLL_INTERVAL_MS);
+    }
+
+    async function refreshScheduleFromServer(options = {}) {
+      if (schedulePollInFlight) {
+        return;
+      }
+      schedulePollInFlight = true;
+      try {
+        const payload = await fetchJson("/api/v1/monitor/source");
+        applyScheduleState(payload.schedule || {}, {
+          updateResultBox: Boolean(options.updateResultBox),
+          logs: payload.logs,
+          activePublicSource: payload.activePublicSource,
+          rawExportTarget: payload.rawExportTarget,
+          sorkorExportTarget: payload.sorkorExportTarget,
+          current: payload.current,
+          bmc: payload.bmc,
+          mock: payload.mock,
+        });
+      } catch (error) {
+        // Background sync should not interrupt manual actions.
+      } finally {
+        schedulePollInFlight = false;
+      }
+    }
+
+    function applyScheduleState(schedule, meta) {
+      scheduleEnabled = Boolean(schedule && schedule.enabled);
+      scheduleNextRunAt = (schedule && schedule.nextRunAt) || null;
+      if (schedule && schedule.intervalSeconds) {
+        scheduleIntervalInput.value = schedule.intervalSeconds;
+      }
+      if (meta && meta.current) {
+        updateEffectiveBadge(
+          meta.current,
+          meta.bmc,
+          meta.activePublicSource,
+          meta.rawExportTarget,
+          meta.sorkorExportTarget
+        );
+      }
+      if (meta && meta.bmc) {
+        renderBmcConfig(meta.bmc);
+      }
+      if (meta && meta.activePublicSource) {
+        renderActivePublicSource(meta.activePublicSource, meta.rawExportTarget, meta.sorkorExportTarget);
+      }
+      if (meta && meta.mock) {
+        renderMockState(meta.mock);
+      }
+      if (meta && meta.updateResultBox) {
+        resultBox.textContent = JSON.stringify({
+          current: meta.current,
+          bmc: meta.bmc,
+          schedule: schedule,
+          mock: meta.mock,
+          activePublicSource: meta.activePublicSource,
+          bkkExportTarget: meta.bkkExportTarget,
+          sorkorExportTarget: meta.sorkorExportTarget,
+          rawExportTarget: meta.rawExportTarget,
+          logs: meta.logs,
+        }, null, 2);
+      }
+      ensureCountdownTimer();
+      updateCountdownDisplay();
+      updateScheduleButtons();
+      if (scheduleEnabled) {
+        startSchedulePolling();
+      } else {
+        stopSchedulePolling();
+      }
+    }
+
+    function renderConfig(payload) {
+      const config = payload.current || {};
+      enabledInput.checked = Boolean(config.enabled);
+      urlInput.value = config.url || "";
+      timeoutInput.value = config.timeoutSeconds || 10;
+      sourceModeInput.value = config.source || "none";
+      renderBmcConfig(payload.bmc || {});
+      renderActivePublicSource(
+        payload.activePublicSource || {},
+        payload.rawExportTarget || {},
+        payload.sorkorExportTarget || {}
+      );
+      updateEffectiveBadge(
+        config,
+        payload.bmc || {},
+        payload.activePublicSource || {},
+        payload.rawExportTarget || {},
+        payload.sorkorExportTarget || {}
+      );
+      applyScheduleState(payload.schedule || {}, {
+        current: config,
+        bmc: payload.bmc,
+        activePublicSource: payload.activePublicSource,
+        bkkExportTarget: payload.bkkExportTarget,
+        sorkorExportTarget: payload.sorkorExportTarget,
+        rawExportTarget: payload.rawExportTarget,
+        logs: payload.logs,
+        mock: payload.mock,
+        updateResultBox: true,
+      });
+      renderMockState(payload.mock || {});
+      resultBox.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    async function loadConfig() {
+      setBusy(true);
+      try {
+        const payload = await fetchJson("/api/v1/monitor/source");
+        renderConfig(payload);
+        statusText.textContent = "โหลด config ปัจจุบันแล้ว";
+      } catch (error) {
+        statusText.textContent = "โหลด config ไม่สำเร็จ: " + error.message;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function saveConfig() {
+      localStorage.setItem("resultsApiKey", apiKeyInput.value.trim());
+      setBusy(true);
+      statusText.textContent = "กำลังบันทึก...";
+      try {
+        const payload = await fetchJson("/api/v1/monitor/source", {
+          method: "PUT",
+          body: JSON.stringify(currentConfigPayload()),
+        });
+        renderConfig(payload);
+        statusText.textContent = "บันทึก config แล้ว";
+      } catch (error) {
+        statusText.textContent = "บันทึกไม่สำเร็จ: " + error.message;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function currentConfigPayload(extraFields) {
+      return {
+        enabled: enabledInput.checked,
+        url: urlInput.value.trim(),
+        timeoutSeconds: Number(timeoutInput.value || 10),
+        bmcEnabled: bmcEnabledInput.checked,
+        bmcUrl: bmcUrlInput.value.trim(),
+        bmcTimeoutSeconds: Number(bmcTimeoutInput.value || 10),
+        activePublicSource: selectedActivePublicSource(),
+        scheduleIntervalSeconds: Number(scheduleIntervalInput.value || 300),
+        mockIntervalSeconds: Number(mockIntervalInput.value || 8),
+        ...(extraFields || {}),
+      };
+    }
+
+    async function runMockAction(action) {
+      localStorage.setItem("resultsApiKey", apiKeyInput.value.trim());
+      setBusy(true);
+      validateMockAndFetchIntervals();
+      statusText.textContent =
+        action === "start" ? "กำลังเริ่มจำลอง..." : "กำลังหยุดจำลอง...";
+      try {
+        const payload = await fetchJson("/api/v1/monitor/source", {
+          method: "PUT",
+          body: JSON.stringify(currentConfigPayload({ mockAction: action })),
+        });
+        renderConfig(payload);
+        statusText.textContent =
+          action === "start" ? "เริ่มจำลองแล้ว — ข้อมูลจะถูกเขียนทับตามช่วง Mock" :
+          "หยุดจำลองแล้ว";
+      } catch (error) {
+        statusText.textContent = "จัดการจำลองไม่สำเร็จ: " + error.message;
+        setBusy(false);
+      }
+    }
+
+    async function runScheduleAction(action) {
+      localStorage.setItem("resultsApiKey", apiKeyInput.value.trim());
+      setBusy(true);
+      if (action === "start" || action === "resume") {
+        validateMockAndFetchIntervals();
+      }
+      statusText.textContent =
+        action === "start" ? "กำลังเริ่มนับเวลา..." :
+        action === "stop" ? "กำลังหยุดนับเวลา..." :
+        "กำลังเริ่มนับใหม่...";
+      try {
+        const payload = await fetchJson("/api/v1/monitor/source", {
+          method: "PUT",
+          body: JSON.stringify(currentConfigPayload({ scheduleAction: action })),
+        });
+        renderConfig(payload);
+        statusText.textContent =
+          action === "start" ? "เริ่มนับเวลาแล้ว" :
+          action === "stop" ? "หยุดนับเวลาแล้ว" :
+          "เริ่มนับใหม่แล้ว";
+      } catch (error) {
+        statusText.textContent = "จัดการ schedule ไม่สำเร็จ: " + error.message;
+        setBusy(false);
+      }
+    }
+
+    async function fetchNow() {
+      localStorage.setItem("resultsApiKey", apiKeyInput.value.trim());
+      setBusy(true);
+      statusText.textContent = "กำลังดึงข้อมูลและ export...";
+      try {
+        await fetchJson("/api/v1/monitor/source", {
+          method: "PUT",
+          body: JSON.stringify(currentConfigPayload()),
+        });
+        const payload = await fetchJson("/api/v1/monitor/source/fetch", {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        renderConfig({
+          current: payload.current,
+          schedule: payload.schedule,
+          mock: payload.mock,
+          activePublicSource: payload.activePublicSource,
+          bkkExportTarget: payload.bkkExportTarget,
+          rawExportTarget: payload.rawExportTarget,
+          logs: payload.logs,
+        });
+        resultBox.textContent = JSON.stringify(payload, null, 2);
+        statusText.textContent = "ดึงข้อมูลและ export สำเร็จ";
+      } catch (error) {
+        statusText.textContent = "ดึงข้อมูลไม่สำเร็จ: " + error.message;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    document.getElementById("saveButton").addEventListener("click", saveConfig);
+    document.getElementById("fetchButton").addEventListener("click", fetchNow);
+    startScheduleButton.addEventListener("click", () => runScheduleAction("start"));
+    stopScheduleButton.addEventListener("click", () => runScheduleAction("stop"));
+    resumeScheduleButton.addEventListener("click", () => runScheduleAction("resume"));
+    startMockButton.addEventListener("click", () => runMockAction("start"));
+    stopMockButton.addEventListener("click", () => runMockAction("stop"));
+    loadConfig();
+  </script>
+</body>
+</html>
+"""
 
 
 @app.get("/health")
@@ -2687,311 +3121,93 @@ def get_monitor_page() -> str:
     return MONITOR_HTML
 
 
-@app.get("/api/v1/monitor/districts", dependencies=[Depends(require_api_key)])
-def get_monitor_districts() -> dict[str, Any]:
-    return monitor_districts_response()
-
-
-@app.get("/api/v1/monitor/overview", dependencies=[Depends(require_api_key)])
-def get_monitor_overview() -> dict[str, Any]:
-    districts_payload = monitor_districts_response()
-    return build_monitor_overview(
-        monitor_districts=districts_payload["districts"],
-        election_id=settings.election_id,
-        generated_at=districts_payload["generatedAt"],
-    )
-
-
-@app.get("/api/v1/monitor/districts/{area_id}", dependencies=[Depends(require_api_key)])
-def get_monitor_district(area_id: str, limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
-    try:
-        districts_by_id = district_catalog.districts_by_id()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="District master data is unavailable") from exc
-
-    district = districts_by_id.get(area_id)
-    if not district or district.get("provinceCode") != 10:
-        raise HTTPException(status_code=404, detail="District not found")
-
-    try:
-        candidates_by_number = candidate_catalog.candidates_by_number()
-    except Exception:
-        candidates_by_number = {}
-
-    try:
-        index = store.area_submissions(settings.source_election_id, area_id) or {}
-        raw_approved_results = store.approved_results_for_area(settings.source_election_id, area_id)
-        rounds, effective_results = apply_round_overrides(area_id, raw_approved_results)
-        approved_results = apply_district_summary_overrides(effective_results)
-    except BotoCoreError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"S3 data is unavailable. Check AWS credentials/session and RESULTS_API_S3_BUCKET. {exc}",
-        ) from exc
-    mode = current_data_mode()
-    interpreted_result = interpreted_area_result(approved_results, mode)
-    monitor_payload = build_monitor_districts(
-        district_catalog={area_id: district},
-        area_indexes={area_id: index},
-        approved_results_by_area={area_id: [interpreted_result] if interpreted_result else []},
-        raw_approved_results_by_area={area_id: approved_results},
-        candidate_catalog=candidates_by_number,
-        election_id=settings.election_id,
-        delayed_after_minutes=settings.delayed_after_minutes,
-    )
-    monitor_row = monitor_payload["districts"][0]
-    submissions = [
-        item
-        for item in index.get("submissions", [])
-        if isinstance(item, dict)
-    ][:limit]
-
-    return without_nulls(
-        {
-            **monitor_row,
-            "schemaVersion": "1.0",
-            "resource": "election-monitor-district",
-            "generatedAt": monitor_payload["generatedAt"],
-            "electionId": settings.election_id,
-            "submissions": submissions,
-            "summaryOverride": read_district_summary_override(area_id),
-            "dataInterpretation": {"mode": mode, "description": DATA_INTERPRETATION_MODES[mode]},
-            "latestApprovedResult": interpreted_result,
-            "rounds": rounds[:limit],
-            "approvedResults": approved_results[:limit],
-            "rawApprovedResults": raw_approved_results[:limit],
-        }
-    )
-
-
-@app.get("/api/v1/monitor/overrides", dependencies=[Depends(require_api_key)])
-def get_monitor_overrides() -> dict[str, Any]:
-    return monitor_overrides_response()
-
-
-@app.patch("/api/v1/monitor/page-meta", dependencies=[Depends(require_api_key)])
-def update_monitor_page_meta(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    actor, reason = normalize_actor_reason(payload)
-    updates = validate_page_meta_payload(payload)
-    try:
-        before = read_page_meta_override()
-        after = {**before, **updates}
-        store.write_json(PAGE_META_OVERRIDE_KEY, after)
-        audit_event = write_monitor_audit_event(
-            event_type="page_meta_updated",
-            actor=actor,
-            reason=reason,
-            before=before,
-            after=after,
-        )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    invalidate_result_caches()
+@app.get("/api/v1/monitor/source", dependencies=[Depends(require_api_key)])
+def get_monitor_source() -> dict[str, Any]:
+    current = effective_external_governor_results_config()
     return {
         "schemaVersion": "1.0",
-        "resource": "election-monitor-page-meta-override",
-        "electionId": settings.election_id,
-        "pageMeta": after,
-        "auditEvent": audit_event,
+        "resource": "governor-results-monitor-source",
+        "current": current,
+        "bmc": effective_external_bmc_results_config(),
+        "bkkExportTarget": bkk_public_export_config(),
+        "sorkorExportTarget": sorkor_export_target_config(),
+        "rawExportTarget": effective_raw_results_export_config(),
+        "activePublicSource": effective_active_public_source_config(),
+        "schedule": effective_monitor_schedule_config(),
+        "mock": effective_monitor_mock_config(),
+        "logs": monitor_fetch_log_entries(),
     }
 
 
-@app.patch("/api/v1/monitor/data-mode", dependencies=[Depends(require_api_key)])
-def update_monitor_data_mode(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    actor, reason = normalize_actor_reason(payload)
-    updates = validate_data_mode_payload(payload)
-    try:
-        before = read_data_mode_override()
-        after = {**before, **updates}
-        store.write_json(DATA_MODE_OVERRIDE_KEY, after)
-        audit_event = write_monitor_audit_event(
-            event_type="data_mode_updated",
-            actor=actor,
-            reason=reason,
-            before=before,
-            after=after,
+@app.put("/api/v1/monitor/source", dependencies=[Depends(require_api_key)])
+def update_monitor_source(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    saved = validate_monitor_external_source_payload(payload)
+    bmc_saved = None
+    if any(key in payload for key in ("bmcEnabled", "bmcUrl", "bmcTimeoutSeconds")):
+        bmc_saved = validate_monitor_bmc_source_payload(payload)
+    schedule = build_monitor_schedule_update(payload)
+    active_public_source_saved, promote_source = build_monitor_active_public_source_update(payload)
+    mock_saved = None
+    if any(key in payload for key in ("mockAction", "mockIntervalSeconds", "mockEnabled")):
+        mock_saved = build_monitor_mock_update(
+            payload,
+            schedule_interval_seconds=int(schedule.get("intervalSeconds") or 300),
+            schedule_enabled=bool(schedule.get("enabled")),
         )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    invalidate_result_caches()
     try:
-        static_export = export_static_governor_results()
+        store.write_json(MONITOR_EXTERNAL_SOURCE_KEY, saved)
+        if bmc_saved is not None:
+            store.write_json(MONITOR_EXTERNAL_BMC_SOURCE_KEY, bmc_saved)
+        write_monitor_schedule(schedule)
+        if mock_saved is not None:
+            write_monitor_mock(mock_saved)
+        write_active_public_source(
+            s3_client=store.s3_client,
+            bucket=store.bucket,
+            score_prefix=settings.prefix,
+            source=active_public_source_saved["source"],
+            updated_at=active_public_source_saved["updatedAt"],
+        )
     except (BotoCoreError, ClientError) as exc:
         raise monitor_storage_error(exc) from exc
-    return {
-        "schemaVersion": "1.0",
-        "resource": "election-monitor-data-mode-override",
-        "electionId": settings.election_id,
-        "dataMode": after,
-        "auditEvent": audit_event,
-        "staticExport": static_export,
-    }
-
-
-@app.patch("/api/v1/monitor/summary", dependencies=[Depends(require_api_key)])
-def update_monitor_summary(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    raise HTTPException(
-        status_code=400,
-        detail="Summary overrides must be submitted per district via /api/v1/monitor/districts/{area_id}/summary.",
-    )
-
-
-@app.patch("/api/v1/monitor/districts/{area_id}/summary", dependencies=[Depends(require_api_key)])
-def update_monitor_district_summary(area_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    actor, reason = normalize_actor_reason(payload)
-    try:
-        districts_by_id = district_catalog.districts_by_id()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="District master data is unavailable") from exc
-    district = districts_by_id.get(area_id)
-    if not district or district.get("provinceCode") != 10:
-        raise HTTPException(status_code=404, detail="District not found")
-    try:
-        before = read_district_summary_override(area_id)
-        updates = validate_summary_override_payload(payload, before)
-        after = {**before, **updates}
-        store.write_json(district_summary_override_key(area_id), {**after, "areaId": area_id})
-        audit_event = write_monitor_audit_event(
-            event_type="summary_override_updated",
-            actor=actor,
-            reason=reason,
-            before=before,
-            after=after,
-            area_id=area_id,
-        )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
     invalidate_result_caches()
-    return {
+    public_promote = None
+    public_promote_error = None
+    if promote_source is not None:
+        try:
+            public_promote = maybe_promote_public_results_for_source(promote_source)
+        except HTTPException as exc:
+            public_promote_error = exc.detail
+    response = {
         "schemaVersion": "1.0",
-        "resource": "election-monitor-district-summary-override",
-        "electionId": settings.election_id,
-        "areaId": area_id,
-        "summary": after,
-        "auditEvent": audit_event,
+        "resource": "governor-results-monitor-source",
+        "saved": saved,
+        "activePublicSourceSaved": active_public_source_saved,
+        "current": effective_external_governor_results_config(),
+        "bmc": effective_external_bmc_results_config(),
+        "bkkExportTarget": bkk_public_export_config(),
+        "sorkorExportTarget": sorkor_export_target_config(),
+        "rawExportTarget": effective_raw_results_export_config(),
+        "activePublicSource": effective_active_public_source_config(),
+        "schedule": effective_monitor_schedule_config(),
+        "mock": effective_monitor_mock_config(),
+        "logs": monitor_fetch_log_entries(),
     }
+    if bmc_saved is not None:
+        response["bmcSaved"] = bmc_saved
+    if mock_saved is not None:
+        response["mockSaved"] = mock_saved
+    if public_promote is not None:
+        response["publicPromote"] = public_promote
+    if public_promote_error is not None:
+        response["publicPromoteError"] = public_promote_error
+    return response
 
 
-def ensure_monitor_district(area_id: str) -> None:
-    try:
-        districts_by_id = district_catalog.districts_by_id()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="District master data is unavailable") from exc
-    district = districts_by_id.get(area_id)
-    if not district or district.get("provinceCode") != 10:
-        raise HTTPException(status_code=404, detail="District not found")
-
-
-def write_round_override(area_id: str, round_id: str, update: dict[str, Any], *, actor: str, reason: str | None, event_type: str) -> dict[str, Any]:
-    before_doc = read_district_round_overrides(area_id)
-    before_rounds = dict(before_doc.get("rounds") or {})
-    before = before_rounds.get(round_id, {})
-    after_round = without_nulls({**before, **update, "roundId": round_id, "areaId": area_id})
-    after_rounds = {**before_rounds, round_id: after_round}
-    after_doc = {"areaId": area_id, "rounds": after_rounds}
-    store.write_json(district_round_overrides_key(area_id), after_doc)
-    audit_event = write_monitor_audit_event(
-        event_type=event_type,
-        actor=actor,
-        reason=reason,
-        before=before,
-        after=after_round,
-        area_id=area_id,
-    )
-    invalidate_result_caches()
-    return {"round": after_round, "auditEvent": audit_event}
-
-
-@app.post("/api/v1/monitor/districts/{area_id}/rounds", dependencies=[Depends(require_api_key)])
-def create_monitor_district_round(area_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    ensure_monitor_district(area_id)
-    actor, reason = normalize_actor_reason(payload)
-    updates = validate_round_payload(payload)
-    round_id = str(payload.get("roundId") or "").strip() or f"manual:{audit_timestamp()[0]}"
-    updates.setdefault("position", 100000)
-    updates.setdefault("reportedAt", utc_now_iso())
-    updates["sourceType"] = "manual_round"
-    try:
-        written = write_round_override(
-            area_id,
-            round_id,
-            updates,
-            actor=actor,
-            reason=reason,
-            event_type="district_round_created",
-        )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    return {
-        "schemaVersion": "1.0",
-        "resource": "election-monitor-district-round",
-        "electionId": settings.election_id,
-        "areaId": area_id,
-        **written,
-    }
-
-
-@app.patch("/api/v1/monitor/districts/{area_id}/rounds/{round_id:path}", dependencies=[Depends(require_api_key)])
-def update_monitor_district_round(area_id: str, round_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    ensure_monitor_district(area_id)
-    actor, reason = normalize_actor_reason(payload)
-    updates = validate_round_payload(payload, partial=True)
-    try:
-        written = write_round_override(
-            area_id,
-            round_id,
-            updates,
-            actor=actor,
-            reason=reason,
-            event_type="district_round_updated",
-        )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    return {
-        "schemaVersion": "1.0",
-        "resource": "election-monitor-district-round",
-        "electionId": settings.election_id,
-        "areaId": area_id,
-        **written,
-    }
-
-
-@app.delete("/api/v1/monitor/districts/{area_id}/rounds/{round_id:path}", dependencies=[Depends(require_api_key)])
-def delete_monitor_district_round(area_id: str, round_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
-    ensure_monitor_district(area_id)
-    actor, reason = normalize_actor_reason(payload or {})
-    try:
-        written = write_round_override(
-            area_id,
-            round_id,
-            {"deleted": True},
-            actor=actor,
-            reason=reason,
-            event_type="district_round_deleted",
-        )
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    return {
-        "schemaVersion": "1.0",
-        "resource": "election-monitor-district-round",
-        "electionId": settings.election_id,
-        "areaId": area_id,
-        **written,
-    }
-
-
-@app.get("/api/v1/monitor/audit-events", dependencies=[Depends(require_api_key)])
-def get_monitor_audit_events(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-    try:
-        events = store.list_json_objects(MONITOR_AUDIT_PREFIX, limit=limit)
-    except BotoCoreError as exc:
-        raise monitor_storage_error(exc) from exc
-    return {
-        "schemaVersion": "1.0",
-        "resource": "election-monitor-audit-events",
-        "electionId": settings.election_id,
-        "events": events,
-    }
+@app.post("/api/v1/monitor/source/fetch", dependencies=[Depends(require_api_key)])
+def fetch_monitor_source(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    del payload
+    return perform_monitor_fetch(trigger="manual")
 
 
 @app.get("/api/v1/elections/{election_id}/areas", dependencies=[Depends(require_api_key)])
@@ -3006,15 +3222,17 @@ def list_areas(election_id: str) -> dict[str, Any]:
         approved_results = store.approved_results_for_area(election_id, area_id)
         district = districts_by_id.get(area_id, {})
         areas.append(
-            without_nulls({
-                "area_id": area_id,
-                "district_code": district.get("districtCode"),
-                "district_name_th": district.get("districtNameTh"),
-                "district_name_en": district.get("districtNameEn"),
-                "submission_count": int(index.get("submission_count") or 0),
-                "approved_submission_count": len(approved_results),
-                "latest_approved_at": approved_results[0].get("approved_at") if approved_results else None,
-            })
+            without_nulls(
+                {
+                    "area_id": area_id,
+                    "district_code": district.get("districtCode"),
+                    "district_name_th": district.get("districtNameTh"),
+                    "district_name_en": district.get("districtNameEn"),
+                    "submission_count": int(index.get("submission_count") or 0),
+                    "approved_submission_count": len(approved_results),
+                    "latest_approved_at": approved_results[0].get("approved_at") if approved_results else None,
+                }
+            )
         )
     return {"election_id": election_id, "area_count": len(areas), "areas": areas}
 
@@ -3029,16 +3247,18 @@ def get_area(election_id: str, area_id: str) -> dict[str, Any]:
         district = district_catalog.districts_by_id().get(area_id, {})
     except Exception:
         district = {}
-    return without_nulls({
-        "election_id": election_id,
-        "area_id": area_id,
-        "district_code": district.get("districtCode"),
-        "district_name_th": district.get("districtNameTh"),
-        "district_name_en": district.get("districtNameEn"),
-        "submission_count": int(index.get("submission_count") or 0),
-        "approved_submission_count": len(approved_results),
-        "latest_approved_result": approved_results[0] if approved_results else None,
-    })
+    return without_nulls(
+        {
+            "election_id": election_id,
+            "area_id": area_id,
+            "district_code": district.get("districtCode"),
+            "district_name_th": district.get("districtNameTh"),
+            "district_name_en": district.get("districtNameEn"),
+            "submission_count": int(index.get("submission_count") or 0),
+            "approved_submission_count": len(approved_results),
+            "latest_approved_result": approved_results[0] if approved_results else None,
+        }
+    )
 
 
 @app.get(
@@ -3089,13 +3309,85 @@ def governor_results_response(*, use_cache: bool = True) -> dict[str, Any]:
 
 
 def read_static_export(relative_name: str) -> dict[str, Any] | None:
-    prefix = settings.static_results_prefix.strip().strip("/")
+    prefix = static_results_prefix_for_target(LIVE_TARGET).strip().strip("/")
     key = f"{prefix}/{relative_name}" if prefix else relative_name
     try:
         payload = store.read_absolute_json(key)
     except (BotoCoreError, ClientError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def build_raw_export_keys(prefix: str, *, captured_at: str) -> dict[str, str]:
+    normalized_prefix = prefix.strip().strip("/")
+    timestamp_for_name = captured_at.replace(":", "-")
+    latest_key = f"{normalized_prefix}/raw/latest.json" if normalized_prefix else "raw/latest.json"
+    history_key = (
+        f"{normalized_prefix}/raw/history/{timestamp_for_name}.json"
+        if normalized_prefix
+        else f"raw/history/{timestamp_for_name}.json"
+    )
+    return {
+        "latestKey": latest_key,
+        "historyKey": history_key,
+    }
+
+
+def export_raw_governor_results(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    export_target = effective_raw_results_export_config()
+    prefix = export_target["prefix"]
+    captured_at = utc_now_iso()
+    keys = build_raw_export_keys(prefix, captured_at=captured_at)
+    envelope = {
+        "schemaVersion": "1.0",
+        "resource": "governor-results-raw",
+        "capturedAt": captured_at,
+        "sourceConfig": {
+            "url": effective_external_governor_results_config().get("url"),
+            "timeoutSeconds": effective_external_governor_results_config().get("timeoutSeconds"),
+        },
+        "exportTarget": {
+            "target": export_target["target"],
+            "prefix": prefix,
+        },
+        "payload": raw_payload,
+    }
+    store.write_absolute_json(keys["latestKey"], envelope)
+    store.write_absolute_json(keys["historyKey"], envelope)
+    return {
+        "target": export_target["target"],
+        "prefix": prefix,
+        "capturedAt": captured_at,
+        **keys,
+    }
+
+
+def export_raw_bmc_results(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    prefix = bmc_raw_export_prefix()
+    captured_at = utc_now_iso()
+    keys = build_raw_export_keys(prefix, captured_at=captured_at)
+    envelope = {
+        "schemaVersion": "1.0",
+        "resource": "bmc-results-raw",
+        "capturedAt": captured_at,
+        "sourceConfig": {
+            "url": effective_external_bmc_results_config().get("url"),
+            "timeoutSeconds": effective_external_bmc_results_config().get("timeoutSeconds"),
+        },
+        "exportTarget": {
+            "target": BKK_TARGET,
+            "prefix": prefix,
+        },
+        "payload": raw_payload,
+    }
+    store.write_absolute_json(keys["latestKey"], envelope)
+    store.write_absolute_json(keys["historyKey"], envelope)
+    return {
+        "target": BKK_TARGET,
+        "prefix": prefix,
+        "capturedAt": captured_at,
+        **keys,
+    }
 
 
 def _build_governor_results_response() -> dict[str, Any]:
@@ -3126,12 +3418,6 @@ def _build_governor_results_response() -> dict[str, Any]:
         total_units=total_units,
         delayed_after_minutes=settings.delayed_after_minutes,
     )
-    page_meta_override = read_page_meta_override()
-    if page_meta_override:
-        if page_meta_override.get("title"):
-            payload["pageMeta"]["title"] = page_meta_override["title"]
-        if page_meta_override.get("resultStatus"):
-            payload["pageMeta"]["resultStatus"] = page_meta_override["resultStatus"]
     payload["dataInterpretation"] = {
         "mode": mode,
         "description": DATA_INTERPRETATION_MODES[mode],
@@ -3148,7 +3434,6 @@ def _build_governor_district_results_response() -> dict[str, Any]:
         districts_by_id = district_catalog.districts_by_id()
     except Exception:
         districts_by_id = {}
-
     mode = current_data_mode()
     approved_results = interpreted_public_results(mode)
     if settings.enable_static_results_fallback and not approved_results:
@@ -3166,12 +3451,14 @@ def _build_governor_district_results_response() -> dict[str, Any]:
 def export_static_governor_results() -> dict[str, Any]:
     summary_payload = governor_results_response(use_cache=False)
     districts_payload = _build_governor_district_results_response()
-    prefix = settings.static_results_prefix
+    prefix = static_results_prefix_for_target(LINE_TARGET)
     summary_key = f"{prefix}/sumary.json" if prefix else "sumary.json"
     districts_key = f"{prefix}/districts.json" if prefix else "districts.json"
     store.write_absolute_json(summary_key, summary_payload)
     store.write_absolute_json(districts_key, districts_payload)
     return {
+        "target": LINE_TARGET,
+        "prefix": prefix,
         "summaryKey": summary_key,
         "districtsKey": districts_key,
         "dataMode": summary_payload.get("dataInterpretation", {}).get("mode"),

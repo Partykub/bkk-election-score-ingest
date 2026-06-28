@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "redeploy from local env after syncing files",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && test -f .env && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

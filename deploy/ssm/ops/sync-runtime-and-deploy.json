@@ -1,0 +1,18 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "sync runtime fixes and deploy election prod",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "if [ ! -s /opt/election/.env ] && [ -f /opt/election/.env.bak-20260622-093700 ]; then cp /opt/election/.env.bak-20260622-093700 /opt/election/.env; chown ec2-user:ec2-user /opt/election/.env; chmod 600 /opt/election/.env; echo restored_env_from_backup; fi",
+      "aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-ocr-worker-main-20260623-113413.py /opt/election/hermes/ocr_worker/__main__.py",
+      "aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-supervisor-intake-20260623-113413.py /opt/election/hermes/supervisor/services/intake_server.py",
+      "aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-results-api-app-20260623-113413.py /opt/election/hermes/results_api/app.py",
+      "chown ec2-user:ec2-user /opt/election/hermes/ocr_worker/__main__.py /opt/election/hermes/supervisor/services/intake_server.py /opt/election/hermes/results_api/app.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

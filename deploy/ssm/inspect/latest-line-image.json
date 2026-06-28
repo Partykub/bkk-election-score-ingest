@@ -1,0 +1,10 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect latest LINE image manifest and draft",
+  "Parameters": {
+    "commands": [
+      "sudo -u ec2-user bash -lc 'cd /opt/election && python3 - <<\"PY\"\nimport boto3, json\n\ns3 = boto3.client(\"s3\")\nbucket = \"bkk-election-images-prod\"\nprefix = \"api-data/score/messages/\"\n\nkeys = []\nfor page in s3.get_paginator(\"list_objects_v2\").paginate(Bucket=bucket, Prefix=prefix):\n    for obj in page.get(\"Contents\", []):\n        key = obj[\"Key\"]\n        if key.endswith(\"/manifest.json\"):\n            keys.append((obj[\"LastModified\"], key))\nkeys.sort(reverse=True)\nprint(\"latest_manifests:\")\nfor ts, key in keys[:8]:\n    print(ts.isoformat(), key)\nif not keys:\n    raise SystemExit(\"no manifests\")\n\n_, latest = keys[0]\nmanifest = json.loads(s3.get_object(Bucket=bucket, Key=latest)[\"Body\"].read().decode(\"utf-8\"))\nprint(\"\\nmanifest:\", json.dumps(manifest, ensure_ascii=False, indent=2))\n\nsrc = manifest.get(\"source_message_id\")\nif not src:\n    raise SystemExit(0)\n\ndraft_ptr_key = f\"api-data/score/messages/{src}/draft_latest.json\"\ntry:\n    draft_ptr = json.loads(s3.get_object(Bucket=bucket, Key=draft_ptr_key)[\"Body\"].read().decode(\"utf-8\"))\n    print(\"\\ndraft_latest:\", json.dumps(draft_ptr, ensure_ascii=False, indent=2))\n    dk = draft_ptr.get(\"draft_key\")\n    if dk:\n        draft = json.loads(s3.get_object(Bucket=bucket, Key=dk)[\"Body\"].read().decode(\"utf-8\"))\n        subset = {k: draft.get(k) for k in [\"area_id\", \"report_type\", \"revision\", \"validation_flags\", \"notes\", \"eligible_voters\", \"voter_turnout\", \"valid_ballots\", \"invalid_ballots\", \"vote_no\", \"candidate_scores\"]}\n        print(\"\\ndraft:\", json.dumps(subset, ensure_ascii=False, indent=2))\n        raw = (draft.get(\"raw_model_output\") or {}).get(\"text\")\n        if raw:\n            print(\"\\nraw_model_output_text:\", raw[:3000])\nexcept Exception as exc:\n    print(\"draft_read_error:\", exc)\nPY'"
+    ]
+  }
+}

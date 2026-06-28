@@ -1,0 +1,10 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify sorkor BMC dual fetch on prod",
+  "Parameters": {
+    "commands": [
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nimport json\nfrom hermes.results_api.app import effective_external_bmc_results_config, monitor_fetch_log_entries\nbmc = effective_external_bmc_results_config()\nentry = monitor_fetch_log_entries()[0] if monitor_fetch_log_entries() else {}\nprint(json.dumps({\n  \"bmcConfig\": {\"enabled\": bmc.get(\"enabled\"), \"url\": bmc.get(\"url\")},\n  \"latestLog\": {\n    \"bmcStatus\": entry.get(\"bmcStatus\"),\n    \"governorStatus\": entry.get(\"governorStatus\"),\n    \"sorkorSummaryKey\": entry.get(\"sorkorSummaryKey\"),\n    \"trigger\": entry.get(\"trigger\"),\n  },\n}, ensure_ascii=False, indent=2))\nPY'"
+    ]
+  }
+}

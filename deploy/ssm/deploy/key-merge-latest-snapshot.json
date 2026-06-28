@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "deploy results api key-wise latest snapshot merge",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-results-api-app-key-merge-20260623.py hermes/results_api/app.py && chmod +x deploy/ec2/deploy.sh && ENV_PARAMETER=/election/prod/compose-env ./deploy/ec2/deploy.sh && docker compose --env-file .env exec -T results-api python -c \"from hermes.results_api.app import export_static_governor_results; print(export_static_governor_results())\"'"
+    ]
+  }
+}

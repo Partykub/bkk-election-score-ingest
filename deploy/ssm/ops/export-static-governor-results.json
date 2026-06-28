@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "export fresh static governor results",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import export_static_governor_results\nprint(export_static_governor_results())\nPY'"
+    ]
+  }
+}

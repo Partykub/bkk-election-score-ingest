@@ -1,0 +1,17 @@
+{
+    "Comment":  "deploy results-api countedBallots fields and re-export governor-results-dev",
+    "DocumentName":  "AWS-RunShellScript",
+    "InstanceIds":  [
+                        "i-06edd717a43f763b7"
+                    ],
+    "Parameters":  {
+                       "commands":  [
+                                        "set -e",
+                                        "aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-results-api-app-counted-ballots-20260623-v2.py /opt/election/hermes/results_api/app.py",
+                                        "chown ec2-user:ec2-user /opt/election/hermes/results_api/app.py",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose --env-file .env up -d --no-deps --build results-api\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T results-api python - \u003c\u003c\"PY\"\nfrom hermes.results_api.app import governor_results_response\npayload = governor_results_response(use_cache=False)\nprint({\n  \"countedBallots\": payload.get(\"summary\", {}).get(\"countedBallots\"),\n  \"countedBallotsPercentage\": payload.get(\"summary\", {}).get(\"countedBallotsPercentage\"),\n  \"mode\": payload.get(\"dataInterpretation\", {}).get(\"mode\")\n})\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T line-relay python - \u003c\u003c\"PY\"\nfrom hermes.supervisor.services.static_results_export import export_static_governor_results\nprint(export_static_governor_results())\nPY\u0027"
+                                    ]
+                   }
+}

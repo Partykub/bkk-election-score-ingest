@@ -1,0 +1,965 @@
+{
+  "type": "LIVE",
+  "total": {
+    "eligiblePopulation": 3500,
+    "totalVotes": 3200,
+    "badVotes": 10,
+    "noVotes": 200,
+    "goodVote": 2990,
+    "progress": 2.0,
+    "pollingUnits": {
+      "total": 50,
+      "reported": 1
+    },
+    "result": [
+      {
+        "candidateId": "18",
+        "count": 300
+      },
+      {
+        "candidateId": "17",
+        "count": 290
+      },
+      {
+        "candidateId": "16",
+        "count": 280
+      },
+      {
+        "candidateId": "15",
+        "count": 260
+      },
+      {
+        "candidateId": "14",
+        "count": 240
+      },
+      {
+        "candidateId": "13",
+        "count": 220
+      },
+      {
+        "candidateId": "12",
+        "count": 200
+      },
+      {
+        "candidateId": "11",
+        "count": 180
+      },
+      {
+        "candidateId": "10",
+        "count": 170
+      },
+      {
+        "candidateId": "9",
+        "count": 160
+      },
+      {
+        "candidateId": "8",
+        "count": 140
+      },
+      {
+        "candidateId": "7",
+        "count": 130
+      },
+      {
+        "candidateId": "6",
+        "count": 120
+      },
+      {
+        "candidateId": "5",
+        "count": 100
+      },
+      {
+        "candidateId": "4",
+        "count": 80
+      },
+      {
+        "candidateId": "3",
+        "count": 60
+      },
+      {
+        "candidateId": "2",
+        "count": 40
+      },
+      {
+        "candidateId": "1",
+        "count": 20
+      }
+    ]
+  },
+  "districts": [
+    {
+      "name": "พระนคร",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ดุสิต",
+      "voting": {
+        "eligiblePopulation": 3500,
+        "totalVotes": 3200,
+        "badVotes": 10,
+        "noVotes": 200,
+        "goodVote": 2990,
+        "progress": 100.0,
+        "result": [
+          {
+            "candidateId": "18",
+            "count": 300
+          },
+          {
+            "candidateId": "17",
+            "count": 290
+          },
+          {
+            "candidateId": "16",
+            "count": 280
+          },
+          {
+            "candidateId": "15",
+            "count": 260
+          },
+          {
+            "candidateId": "14",
+            "count": 240
+          },
+          {
+            "candidateId": "13",
+            "count": 220
+          },
+          {
+            "candidateId": "12",
+            "count": 200
+          },
+          {
+            "candidateId": "11",
+            "count": 180
+          },
+          {
+            "candidateId": "10",
+            "count": 170
+          },
+          {
+            "candidateId": "9",
+            "count": 160
+          },
+          {
+            "candidateId": "8",
+            "count": 140
+          },
+          {
+            "candidateId": "7",
+            "count": 130
+          },
+          {
+            "candidateId": "6",
+            "count": 120
+          },
+          {
+            "candidateId": "5",
+            "count": 100
+          },
+          {
+            "candidateId": "4",
+            "count": 80
+          },
+          {
+            "candidateId": "3",
+            "count": 60
+          },
+          {
+            "candidateId": "2",
+            "count": 40
+          },
+          {
+            "candidateId": "1",
+            "count": 20
+          }
+        ],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 1
+        }
+      }
+    },
+    {
+      "name": "หนองจอก",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางรัก",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางเขน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางกะปิ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ปทุมวัน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ป้อมปราบศัตรูพ่าย",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "พระโขนง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "มีนบุรี",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ลาดกระบัง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ยานนาวา",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "สัมพันธวงศ์",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "พญาไท",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ธนบุรี",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางกอกใหญ่",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ห้วยขวาง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "คลองสาน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ตลิ่งชัน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางกอกน้อย",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางขุนเทียน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ภาษีเจริญ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "หนองแขม",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ราษฎร์บูรณะ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางพลัด",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ดินแดง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บึงกุ่ม",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "สาทร",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางซื่อ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "จตุจักร",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางคอแหลม",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ประเวศ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "คลองเตย",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "สวนหลวง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "จอมทอง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ดอนเมือง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ราชเทวี",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ลาดพร้าว",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "วัฒนา",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางแค",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "หลักสี่",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "สายไหม",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "คันนายาว",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "สะพานสูง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "วังทองหลาง",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "คลองสามวา",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางนา",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ทวีวัฒนา",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "ทุ่งครุ",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    },
+    {
+      "name": "บางบอน",
+      "voting": {
+        "eligiblePopulation": 0,
+        "totalVotes": 0,
+        "badVotes": 0,
+        "noVotes": 0,
+        "goodVote": 0,
+        "progress": 0.0,
+        "result": [],
+        "pollingUnits": {
+          "total": 1,
+          "reported": 0
+        }
+      }
+    }
+  ],
+  "lastUpdatedAt": "2026-06-23T07:38:12Z"
+}

@@ -1,0 +1,15 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect env files on prod",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "cd /opt/election",
+      "pwd",
+      "ls -la . .env* || true",
+      "grep -n '^ELECTION_S3_BUCKET=' .env .env.* 2>/dev/null || true",
+      "grep -n '^RESULTS_API_PARTIES_URL=' .env .env.* 2>/dev/null || true"
+    ]
+  }
+}

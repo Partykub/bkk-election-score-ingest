@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "force latest_snapshot mode on prod and export static",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && python3 - <<\"PY\"\nfrom pathlib import Path\nimport re\npath = Path(\".env\")\ntext = path.read_text(encoding=\"utf-8\")\nline = \"RESULTS_API_DEFAULT_DATA_MODE=latest_snapshot\"\nif \"RESULTS_API_DEFAULT_DATA_MODE=\" in text:\n    text = re.sub(r\"^RESULTS_API_DEFAULT_DATA_MODE=.*$\", line, text, flags=re.M)\nelse:\n    text += \"\\n\" + line + \"\\n\"\npath.write_text(text, encoding=\"utf-8\")\nprint(line)\nPY\n docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import export_static_governor_results\nprint(export_static_governor_results())\nPY'"
+    ]
+  }
+}

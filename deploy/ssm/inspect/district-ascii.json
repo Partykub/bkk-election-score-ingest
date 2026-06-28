@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect district master ascii only",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc '\npython3 - <<\"PY\"\nimport json, subprocess, urllib.request\nfrom pathlib import Path\nprint(\"ENV_URL=\" + Path(\"/opt/election/.env\").read_text(encoding=\"utf-8\").split(\"RESULTS_API_DISTRICTS_URL=\",1)[1].splitlines()[0])\nraw = subprocess.check_output([\"aws\",\"s3\",\"cp\",\"s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json\",\"-\"], text=True)\npayload = json.loads(raw)\nprint(\"S3_TOP_TYPE=\" + type(payload).__name__)\nif isinstance(payload, dict):\n    print(\"S3_KEYS=\" + \",\".join(sorted(payload.keys())[:10]))\n    data = payload.get(\"data\")\n    print(\"S3_DATA_TYPE=\" + type(data).__name__)\n    if isinstance(data, list):\n        print(\"S3_DATA_LEN=\" + str(len(data)))\n    elif isinstance(data, dict):\n        print(\"S3_DATA_KEYS=\" + \",\".join(sorted(data.keys())[:10]))\n        areas = data.get(\"electionAreas\") or data.get(\"districts\") or data.get(\"items\")\n        print(\"S3_AREAS_TYPE=\" + type(areas).__name__)\n        if isinstance(areas, list):\n            print(\"S3_AREAS_LEN=\" + str(len(areas)))\nresp = urllib.request.urlopen(\"http://127.0.0.1:8080/api/v1/governor-results/districts?fresh=1\")\nbody = json.loads(resp.read().decode())\nconsts = (((body.get(\"data\") or {}).get(\"constituencies\")) or [])\nprint(\"API_CONST_LEN=\" + str(len(consts)))\nprint(\"API_GENERATED_AT=\" + str(body.get(\"generatedAt\")))\nPY'"
+    ]
+  }
+}

@@ -18,6 +18,8 @@ from urllib import error, parse, request
 
 import boto3
 
+from hermes.governor_results.area_resolution import format_area_label, normalize_area_id_value, parse_area_id_from_text
+from hermes.supervisor.services.static_results_export import export_static_governor_results
 from hermes.supervisor.upload_service import UploadServiceError, build_upload_service
 
 
@@ -38,8 +40,38 @@ def stable_workflow_session_id(event: dict[str, Any]) -> str:
 
 APPROVAL_TEXTS = {"ยืนยัน"}
 CORRECTION_PREFIXES = ("แก้ไข",)
-REJECT_TEXTS = {"ไม่ถูกต้อง"}
-CORRECTION_HINT_KEYWORDS = ("แก้", "แก้ไข", "ก้ไข", "เบอร์", "ผู้สมัคร", "คะแนน", "หาย", "ผิด", "=")
+REJECT_TEXTS = {"ไม่ถูกต้อง", "ปฏิเสธร่าง"}
+CORRECTION_HINT_KEYWORDS = (
+    "แก้",
+    "แก้ไข",
+    "ก้ไข",
+    "เบอร์",
+    "ผู้สมัคร",
+    "คะแนน",
+    "หาย",
+    "ผิด",
+    "=",
+    "บัตรดี",
+    "บัตรเสีย",
+    "ผู้มีสิทธิ",
+    "ผู้มาใช้สิทธิ",
+    "ผู้ใช้สิทธิ",
+    "มาใช้สิทธิ",
+    "ใช้สิทธิ",
+    "vote no",
+    "voteno",
+    "งดออกเสียง",
+    "ไม่ออกคะแนน",
+    "ไม่ออกเสียง",
+    "ไม่ประสงค์",
+    "เขต",
+    "แขต",
+    "eligible",
+    "turnout",
+    "valid",
+    "invalid",
+    "abstain",
+)
 APPROVAL_HINT_KEYWORDS = ("ยืนยัน", "ยัน", "ยืน", "รับรอง")
 CANCEL_TEXTS = {"ยกเลิก", "กลับ"}
 
@@ -94,9 +126,16 @@ def detect_source_type(event: dict[str, Any]) -> str:
         return "image"
     if message_type == "text":
         text = (message.get("text") or "").strip()
-        if is_approval_text(text):
+        if is_approval_text(text) or is_reject_text(text):
             return "approval_command"
         if is_correction_text(text):
+            return "correction_command"
+        if (
+            looks_like_ballot_summary_correction_text(text)
+            or looks_like_raw_correction_override(text)
+            or looks_like_area_correction_text(text)
+            or looks_like_candidate_score_correction_text(text)
+        ):
             return "correction_command"
         return "text"
     return message_type or "message"
@@ -145,6 +184,8 @@ def update_job_path(update_job_id: str) -> str:
 
 def normalize_approval_action(source_type: str, source_text: str | None) -> str:
     if source_type == "approval_command":
+        if is_reject_text(source_text or ""):
+            return "reject"
         return "approve"
     if source_type == "correction_command":
         return "correct"
@@ -192,6 +233,65 @@ class CandidateScoreOverride:
     score: int
 
 
+BALLOT_SUMMARY_OVERRIDE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "eligible_voters",
+        (
+            r"ผู้มีสิทธิ(?:เลือกตั้ง)?",
+            r"จำนวนผู้มีสิทธิ(?:เลือกตั้ง)?",
+            r"มีสิทธิ(?:เลือกตั้ง)?",
+            r"eligible[_\s-]*voters?",
+        ),
+    ),
+    (
+        "voter_turnout",
+        (
+            r"ผู้(?:มา)?ใช้สิทธิ(?:เลือกตั้ง)?",
+            r"จำนวนผู้(?:มา)?ใช้สิทธิ(?:เลือกตั้ง)?",
+            r"มาใช้สิทธิ(?:เลือกตั้ง)?",
+            r"ใช้สิทธิ(?:เลือกตั้ง)?",
+            r"ผู้มาใช้",
+            r"voter[_\s-]*turnout",
+            r"turnout",
+        ),
+    ),
+    (
+        "valid_ballots",
+        (
+            r"บัตรดี",
+            r"จำนวนบัตรดี",
+            r"valid[_\s-]*ballots?",
+        ),
+    ),
+    (
+        "invalid_ballots",
+        (
+            r"บัตรเสีย",
+            r"จำนวนบัตรเสีย",
+            r"invalid[_\s-]*ballots?",
+        ),
+    ),
+    (
+        "vote_no",
+        (
+            r"vote\s*no",
+            r"voteno",
+            r"ไม่(?:ประสงค์|ออก)[_\s-]*(?:ลง|ใช้)?[_\s-]*(?:คะแนน|สิทธิ)?",
+            r"ไม่ออก(?:คะแนน|เสียง)",
+            r"งด(?:ออกเสียง|ใช้สิทธิ|ลงคะแนน)?",
+            r"abstain(?:ed)?[_\s-]*ballots?",
+        ),
+    ),
+)
+BALLOT_SHORTHAND_OVERRIDE_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(?:^|\s)ดี\s+", "valid_ballots"),
+    (r"(?:^|\s)เสีย\s+", "invalid_ballots"),
+    (r"(?:^|\s)(?:no|งด)\s+", "vote_no"),
+)
+BALLOT_VALUE_SUFFIX_PATTERN = r"\s*(?:=|เป็น|คือ|ควรเป็น|:)?\s*([0-9][0-9,]*)"
+BALLOT_VALUE_PREFIX_PATTERN = r"([0-9][0-9,]*)\s*(?:=|เป็น|คือ|ควรเป็น|:)?\s*"
+
+
 def build_image_received_text(*, queue_position: int = 0, total_in_queue: int = 0) -> str:
     base = "รับรูปเรียบร้อยแล้ว\nกำลังตรวจข้อมูลจากภาพให้ครับ"
     if total_in_queue > 1:
@@ -201,11 +301,22 @@ def build_image_received_text(*, queue_position: int = 0, total_in_queue: int = 
 
 
 def build_correction_guidance_text() -> str:
-    return 'รับทราบว่าต้องการแก้ไขข้อมูล\nกรุณาพิมพ์รายละเอียดเพิ่ม เช่น "แก้ไข ผู้สมัครเบอร์ 4 เป็น 14" หรือ "แก้ไข 4=14"\nถ้าเข้าโหมดแก้ไขแล้ว จะพิมพ์สั้น ๆ เป็น "4=14" ได้เช่นกัน'
+    return (
+        "รับทราบว่าต้องการแก้ไขข้อมูล\n"
+        "คะแนน: 4=14 / ผู้สมัคร 4=14 / เบอร์ 4 เป็น 14\n"
+        "สรุปบัตร: ผู้มีสิทธิ 1000 / ผู้มาใช้สิทธิ 900 / บัตรดี 850 / บัตรเสีย 20 / ไม่ออกเสียง 30\n"
+        "ย่อ: ดี 850 / เสีย 20 / เขต 13 หรือ เขต หนองจอก"
+    )
 
 
 def build_enter_correction_mode_text() -> str:
-    return 'เข้าสู่โหมดแก้ไขแล้ว\nพิมพ์รายละเอียด เช่น "แก้ไข 4=14" หรือ "4=14"\nหากไม่ต้องการแก้แล้ว พิมพ์ "ยกเลิก"'
+    return (
+        "เข้าสู่โหมดแก้ไขแล้ว\n"
+        "คะแนน: 4=14\n"
+        "บัตร: ผู้มีสิทธิ 1000 / ผู้ใช้สิทธิ 900 / บัตรดี 850 / ดี 850 / เสีย 20\n"
+        "เขต: เขต 13 หรือ เขต หนองจอก\n"
+        'หากไม่ต้องการแก้แล้ว พิมพ์ "ยกเลิก"'
+    )
 
 
 def build_approval_guidance_text() -> str:
@@ -213,7 +324,7 @@ def build_approval_guidance_text() -> str:
 
 
 def build_missing_area_guidance_text() -> str:
-    return 'ร่างนี้ยังไม่พบเขต จึงยังบันทึกผลเข้าระบบไม่ได้\nกรุณาตอบ เช่น "แก้ไข เขต 13" เพื่อระบุเขตให้ถูกต้องก่อน แล้วค่อยยืนยันอีกครั้ง'
+    return 'ร่างนี้ยังไม่พบเขต จึงยังบันทึกผลเข้าระบบไม่ได้\nกรุณาตอบ เช่น "แก้ไข เขต 13" หรือ "แก้ไข เขต หนองจอก" เพื่อระบุเขตให้ถูกต้องก่อน แล้วค่อยยืนยันอีกครั้ง'
 
 
 def build_missing_candidate_scores_guidance_text() -> str:
@@ -221,7 +332,7 @@ def build_missing_candidate_scores_guidance_text() -> str:
 
 
 def build_pending_approval_fallback_text() -> str:
-    return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14" หรือหากต้องการปฏิเสธร่างนี้ให้ตอบ "ไม่ถูกต้อง"'
+    return 'หากต้องการรับรองให้ตอบ "ยืนยัน" หากต้องการแก้ไขให้ตอบ เช่น "แก้ไข 4=14" หรือหากต้องการปฏิเสธร่างนี้ให้ตอบ "ปฏิเสธร่าง"'
 
 
 def build_general_help_text() -> str:
@@ -455,7 +566,7 @@ def build_approval_quick_reply_items(*, correction_url: str | None = None, allow
             {
                 "type": "action",
                 "imageUrl": None,
-                "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
+                "action": {"type": "message", "label": "ปฏิเสธร่าง", "text": "ปฏิเสธร่าง"},
             },
         ]
     )
@@ -515,36 +626,144 @@ def parse_candidate_score_overrides(source_text: str | None) -> list[CandidateSc
     if not source_text:
         return []
 
-    normalized_text = source_text.strip()
-    if is_correction_text(normalized_text):
-        normalized_text = re.sub(r"^\S+\s*", "", normalized_text, count=1)
+    normalized_text = strip_correction_command_prefix(source_text)
     if not normalized_text:
         return []
 
-    override_pattern = re.compile(
-        r"(?:(?:ผู้สมัคร|เบอร์)\s*)?(\d+)\s*(?:=|เป็น|คือ|ควรเป็น)?\s*(\d[\d,]*)",
-        re.IGNORECASE,
+    override_patterns = (
+        re.compile(
+            r"(?:ผู้สมัคร|เบอร์|คะแนน)\s*(\d+)\s*(?:=|เป็น|คือ|ควรเป็น)?\s*(\d[\d,]*)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?<!\d)(\d+)\s*(?:=|เป็น|คือ|ควรเป็น)\s*(\d[\d,]*)",
+            re.IGNORECASE,
+        ),
     )
     overrides: list[CandidateScoreOverride] = []
     seen_candidate_numbers: set[int] = set()
-    for candidate_number_text, score_text in override_pattern.findall(normalized_text):
-        candidate_number = int(candidate_number_text)
-        score = int(score_text.replace(",", ""))
-        if candidate_number in seen_candidate_numbers:
-            overrides = [item for item in overrides if item.candidate_number != candidate_number]
-        overrides.append(CandidateScoreOverride(candidate_number=candidate_number, score=score))
-        seen_candidate_numbers.add(candidate_number)
+    for override_pattern in override_patterns:
+        for candidate_number_text, score_text in override_pattern.findall(normalized_text):
+            candidate_number = int(candidate_number_text)
+            score = int(score_text.replace(",", ""))
+            if candidate_number in seen_candidate_numbers:
+                overrides = [item for item in overrides if item.candidate_number != candidate_number]
+            overrides.append(CandidateScoreOverride(candidate_number=candidate_number, score=score))
+            seen_candidate_numbers.add(candidate_number)
     return overrides
+
+
+def looks_like_candidate_score_correction_text(text: str | None) -> bool:
+    if parse_candidate_score_overrides(text):
+        return True
+    normalized = strip_correction_command_prefix(text)
+    return bool(
+        re.search(
+            r"(?:ผู้สมัคร|เบอร์|คะแนน)\s*\d+\s*(?:=|เป็น|คือ|ควรเป็น|\d)",
+            normalized,
+            re.IGNORECASE,
+        )
+        or re.search(r"(?<!\d)\d+\s*(?:=|เป็น|คือ|ควรเป็น)\s*\d", normalized, re.IGNORECASE)
+    )
+
+
+def strip_correction_command_prefix(source_text: str | None) -> str:
+    normalized_text = str(source_text or "").strip()
+    for prefix in CORRECTION_PREFIXES:
+        if normalized_text.startswith(prefix):
+            return normalized_text[len(prefix) :].strip()
+    return normalized_text
+
+
+def _parse_int_value(value_text: str) -> int | None:
+    try:
+        return int(str(value_text).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_area_id_override(source_text: str | None) -> str | None:
     if not source_text:
         return None
+    normalized_text = strip_correction_command_prefix(source_text)
+    return parse_area_id_from_text(normalized_text)
 
-    match = re.search(r"เขต\s*(?:=|เป็น|คือ|ควรเป็น|:|เบอร์)?\s*(\d+)", source_text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    return None
+
+def looks_like_area_correction_text(text: str | None) -> bool:
+    return parse_area_id_override(text) is not None
+
+
+def parse_ballot_summary_overrides(source_text: str | None) -> dict[str, int]:
+    normalized_text = strip_correction_command_prefix(source_text)
+    if not normalized_text:
+        return {}
+
+    overrides: dict[str, int] = {}
+    for field_name, field_patterns in BALLOT_SUMMARY_OVERRIDE_PATTERNS:
+        if field_name in overrides:
+            continue
+        for field_pattern in field_patterns:
+            label_then_value = re.search(
+                rf"(?:{field_pattern}){BALLOT_VALUE_SUFFIX_PATTERN}",
+                normalized_text,
+                re.IGNORECASE,
+            )
+            if label_then_value:
+                parsed_value = _parse_int_value(label_then_value.group(1))
+                if parsed_value is not None:
+                    overrides[field_name] = parsed_value
+                    break
+            value_then_label = re.search(
+                rf"{BALLOT_VALUE_PREFIX_PATTERN}(?:{field_pattern})(?:\s|$|[,.])",
+                normalized_text,
+                re.IGNORECASE,
+            )
+            if value_then_label:
+                parsed_value = _parse_int_value(value_then_label.group(1))
+                if parsed_value is not None:
+                    overrides[field_name] = parsed_value
+                    break
+
+    for field_pattern, field_name in BALLOT_SHORTHAND_OVERRIDE_PATTERNS:
+        if field_name in overrides:
+            continue
+        match = re.search(
+            rf"(?:{field_pattern}){BALLOT_VALUE_SUFFIX_PATTERN}",
+            normalized_text,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        parsed_value = _parse_int_value(match.group(1))
+        if parsed_value is not None:
+            overrides[field_name] = parsed_value
+
+    return overrides
+
+
+def looks_like_ballot_summary_correction_text(text: str | None) -> bool:
+    if not str(text or "").strip():
+        return False
+    if parse_ballot_summary_overrides(text):
+        return True
+    normalized = strip_correction_command_prefix(text)
+    for _, field_patterns in BALLOT_SUMMARY_OVERRIDE_PATTERNS:
+        for field_pattern in field_patterns:
+            if re.search(field_pattern, normalized, re.IGNORECASE) and re.search(r"\d", normalized):
+                return True
+    for field_pattern, _ in BALLOT_SHORTHAND_OVERRIDE_PATTERNS:
+        if re.search(rf"(?:{field_pattern}){BALLOT_VALUE_SUFFIX_PATTERN}", normalized, re.IGNORECASE):
+            return True
+    return False
+
+
+def resolve_correction_overrides(
+    source_text: str | None,
+) -> tuple[list[CandidateScoreOverride], dict[str, int], str | None]:
+    area_id_override = parse_area_id_override(source_text)
+    ballot_summary_overrides = parse_ballot_summary_overrides(source_text)
+    candidate_score_overrides = parse_candidate_score_overrides(source_text)
+    return candidate_score_overrides, ballot_summary_overrides, area_id_override
 
 
 def looks_like_raw_correction_override(text: str | None) -> bool:
@@ -632,14 +851,35 @@ def draft_has_complete_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
     return all(value is not None for value in required_values)
 
 
+def draft_has_any_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
+    values = (
+        normalize_optional_int_value(draft_manifest.get("eligible_voters")),
+        normalize_optional_int_value(draft_manifest.get("voter_turnout")),
+        normalize_optional_int_value(draft_manifest.get("valid_ballots")),
+        normalize_optional_int_value(draft_manifest.get("invalid_ballots")),
+        normalize_optional_int_value(
+            draft_manifest.get("vote_no")
+            if draft_manifest.get("vote_no") is not None
+            else draft_manifest.get("abstained_ballots")
+        ),
+    )
+    return any(value is not None for value in values)
+
+
 def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
     raw_report_type = str(draft_manifest.get("report_type") or "").strip().lower()
     has_scores = draft_has_approvable_candidate_scores(draft_manifest)
-    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+    has_ballot_summary = draft_has_any_ballot_summary(draft_manifest)
 
     if raw_report_type in {"ballot_summary", "turnout_summary", "ballot_accounting_summary"}:
         return "ballot_summary"
     if raw_report_type in {"combined_results_sheet", "combined_score_sheet"}:
+        if has_scores and has_ballot_summary:
+            return "combined_results_sheet"
+        if has_scores:
+            return "election_score_sheet"
+        if has_ballot_summary:
+            return "ballot_summary"
         return "combined_results_sheet"
     if raw_report_type in {"election_score_sheet", "score_sheet", "candidate_results", "candidate_results_report"}:
         if has_scores and has_ballot_summary:
@@ -662,15 +902,13 @@ def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
 def missing_approval_requirements_code(draft_manifest: dict[str, Any]) -> str | None:
     report_type = inferred_report_type(draft_manifest)
     has_scores = draft_has_approvable_candidate_scores(draft_manifest)
-    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+    has_ballot_summary = draft_has_any_ballot_summary(draft_manifest)
 
     if report_type == "ballot_summary" and not has_ballot_summary:
         return "BALLOT_SUMMARY_REQUIRED"
     if report_type == "combined_results_sheet":
         if not has_scores:
             return "CANDIDATE_SCORES_REQUIRED"
-        if not has_ballot_summary:
-            return "BALLOT_SUMMARY_REQUIRED"
     if report_type == "election_score_sheet" and not has_scores:
         return "CANDIDATE_SCORES_REQUIRED"
     if report_type == "other" and not (has_scores or has_ballot_summary):
@@ -679,7 +917,16 @@ def missing_approval_requirements_code(draft_manifest: dict[str, Any]) -> str | 
 
 
 def build_missing_ballot_summary_guidance_text() -> str:
-    return 'เธฃเนเธฒเธเธเธตเนเธขเธฑเธเนเธกเนเธเธฃเธเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃ เธเธถเธเธขเธฑเธเธเธฑเธเธ—เธถเธเธเธฅเน€เธเนเธฒเธฃเธฐเธเธเนเธกเนเนเธ”เน\nเธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เนเธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธขเธทเธเธขเธฑเธ'
+    return (
+        "ร่างนี้ยังไม่มีข้อมูลสรุปบัตรที่อ่านได้ จึงยังบันทึกผลเข้าระบบไม่ได้\n"
+        "ส่งแก้ไขทีละรายการหรือหลายรายการในข้อความเดียวได้ เช่น\n"
+        "ผู้มีสิทธิ 1000\n"
+        "ผู้ใช้สิทธิ 900\n"
+        "บัตรดี 850 หรือ ดี 850\n"
+        "บัตรเสีย 20 หรือ เสีย 20\n"
+        "Vote No 30 หรือ งดออกเสียง 30\n"
+        "เมื่อมีข้อมูลอย่างน้อย 1 รายการแล้วค่อยตอบ ยืนยัน"
+    )
 
 
 def draft_can_be_approved(draft_manifest: dict[str, Any]) -> bool:
@@ -695,10 +942,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     ballot_summary_lines = build_ballot_summary_lines(draft_manifest)
 
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
-    if area_id:
-        lines.append(f"เขต: {area_id}")
-    else:
-        lines.append("เขต: ยังไม่พบ")
+    lines.append(format_area_label(area_id))
     if polling_unit_id:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
@@ -716,7 +960,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     if not area_id:
         lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะระบุเขต")
         lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
-        lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
+        lines.append("ตอบ 'แก้ไข เขต 13' หรือ 'แก้ไข เขต หนองจอก' ก่อนบันทึก")
 
     approval_requirements_code = missing_approval_requirements_code(draft_manifest)
     if approval_requirements_code == "CANDIDATE_SCORES_REQUIRED":
@@ -724,12 +968,12 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
 
     if approval_requirements_code == "BALLOT_SUMMARY_REQUIRED":
-        lines.append("เธขเธฑเธเธขเธทเธเธขเธฑเธเธฃเนเธฒเธเธเธตเนเนเธกเนเนเธ”เนเธเธเธเธงเนเธฒเธเธฐเธกเธตเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃเธเธฃเธ")
-        lines.append("เธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธเธฑเธเธ—เธถเธ")
+        lines.append("ยังไม่สามารถยืนยันร่างนี้ได้ เพราะยังไม่พบข้อมูลสรุปบัตรที่อ่านได้")
+        lines.append("กรุณาแก้ไขข้อมูล ผู้มีสิทธิ, ผู้ใช้สิทธิ, บัตรดี, บัตรเสีย หรือ Vote No อย่างน้อย 1 รายการก่อนบันทึก")
     if draft_can_be_approved(draft_manifest):
         lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
-    lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
-    lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
+    lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 4=14 / ผู้ใช้สิทธิ 900 / ดี 850 / เขต 13 / เขต หนองจอก")
+    lines.append("ตอบ 'ปฏิเสธร่าง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
 
 
@@ -1097,6 +1341,7 @@ class LocalStateStore:
         line_reply_sender: Any | None = None,
         line_push_sender: Any | None = None,
         chat_completion_client: Any | None = None,
+        static_results_exporter: Any | None = None,
     ):
         self.root_path = Path(root_path)
         self.state_backend = state_backend or build_state_backend(self.root_path)
@@ -1106,8 +1351,28 @@ class LocalStateStore:
         self.line_reply_sender = line_reply_sender or build_line_reply_sender_from_env()
         self.line_push_sender = line_push_sender or build_line_push_sender_from_env()
         self.chat_completion_client = chat_completion_client or build_supervisor_chat_client_from_env()
+        self.static_results_exporter = static_results_exporter or export_static_governor_results
         self._locks_lock = threading.Lock()
         self._session_locks = {}
+
+    def _maybe_export_static_results(self) -> None:
+        if self.static_results_exporter is None:
+            return
+        try:
+            result = self.static_results_exporter()
+            if isinstance(result, dict):
+                if result.get("publicPromoteError"):
+                    print(
+                        f"line intake: static export promote failed: {result['publicPromoteError']}",
+                        file=sys.stderr,
+                    )
+                elif result.get("publicPromote"):
+                    print(
+                        f"line intake: static export promoted to live: {result['publicPromote'].get('livePrefix')}",
+                        file=sys.stderr,
+                    )
+        except Exception as exc:
+            print(f"line intake: unable to export static results: {exc}", file=sys.stderr)
 
     def _write_json(self, relative_path: str, payload: dict[str, Any]) -> str:
         return self.state_backend.write_json(relative_path, payload)
@@ -1674,6 +1939,7 @@ class LocalStateStore:
         correction_note: str,
         correction_payload: dict[str, Any],
         candidate_score_overrides: list[CandidateScoreOverride],
+        ballot_summary_overrides: dict[str, int],
         timestamp: str,
         area_id_override: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str, int]:
@@ -1725,7 +1991,13 @@ class LocalStateStore:
         corrected_draft["revision"] = next_revision
         corrected_draft["status"] = "awaiting_approval"
         if area_id_override:
-            corrected_draft["area_id"] = area_id_override
+            corrected_draft["area_id"] = normalize_area_id_value(area_id_override) or area_id_override
+        if corrected_draft.get("vote_no") is not None and corrected_draft.get("abstained_ballots") is None:
+            corrected_draft["abstained_ballots"] = corrected_draft.get("vote_no")
+        for field_name, field_value in ballot_summary_overrides.items():
+            corrected_draft[field_name] = field_value
+            if field_name == "vote_no":
+                corrected_draft["abstained_ballots"] = field_value
         corrected_draft["candidate_scores"] = candidate_scores
         corrected_draft["result_signature"] = build_result_signature(corrected_draft.get("area_id"), candidate_scores)
         corrected_draft["created_by"] = "line_correction"
@@ -1797,20 +2069,22 @@ class LocalStateStore:
             return manifest["state"], target_source_message_id
 
         if action == "correct":
-            candidate_score_overrides = parse_candidate_score_overrides(source_text)
-            area_id_override = parse_area_id_override(source_text)
-            if not candidate_score_overrides and not area_id_override:
+            candidate_score_overrides, ballot_summary_overrides, area_id_override = resolve_correction_overrides(
+                source_text,
+            )
+            if not candidate_score_overrides and not area_id_override and not ballot_summary_overrides:
                 target_source_manifest["pending_user_action"] = "awaiting_correction_input"
                 target_source_manifest["updated_at"] = timestamp
                 self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
                 manifest["state"] = "exception"
                 manifest["exception"] = {
                     "code": "CORRECTION_PARSE_FAILED",
-                    "message": "correction command could not be parsed into candidate score overrides or area id override",
+                    "message": "correction command could not be parsed into candidate score overrides, ballot summary overrides, or area id override",
                 }
                 manifest["correction_payload"] = {
                     "normalized_action": action,
                     "candidate_score_overrides": [],
+                    "ballot_summary_overrides": {},
                     "requires_manual_review": True,
                 }
                 return manifest["state"], target_source_message_id
@@ -1891,6 +2165,7 @@ class LocalStateStore:
                     {"candidate_number": override.candidate_number, "score": override.score}
                     for override in candidate_score_overrides
                 ],
+                "ballot_summary_overrides": ballot_summary_overrides,
                 "requires_manual_review": False,
             }
             if area_id_override:
@@ -1908,6 +2183,7 @@ class LocalStateStore:
                 correction_note=source_text or "",
                 correction_payload=correction_payload,
                 candidate_score_overrides=candidate_score_overrides,
+                ballot_summary_overrides=ballot_summary_overrides,
                 timestamp=timestamp,
                 area_id_override=area_id_override,
             )
@@ -1952,6 +2228,8 @@ class LocalStateStore:
             manifest["correction_payload"] = correction_payload
 
         self._write_json(self.source_manifest_path(target_source_message_id), target_source_manifest)
+        if action == "approve":
+            self._maybe_export_static_results()
 
         manifest["state"] = target_source_manifest["state"] if action == "correct" else new_approval_state
         manifest["current_draft_id"] = target_source_manifest.get("current_draft_id") or draft_manifest.get("draft_id")
@@ -2235,11 +2513,17 @@ class LocalStateStore:
                     or self._source_waits_correction_input(target_source_manifest)
                     or is_correction_text(source_text)
                     or looks_like_raw_correction_override(source_text)
+                    or looks_like_ballot_summary_correction_text(source_text)
+                    or looks_like_area_correction_text(source_text)
+                    or looks_like_candidate_score_correction_text(source_text)
                 ):
                     effective_source_type = "correction_command" if (
                         self._source_waits_correction_input(target_source_manifest)
                         or is_correction_text(source_text)
                         or looks_like_raw_correction_override(source_text)
+                        or looks_like_ballot_summary_correction_text(source_text)
+                        or looks_like_area_correction_text(source_text)
+                        or looks_like_candidate_score_correction_text(source_text)
                     ) else "text"
                     manifest["state"], session_pointer_source_message_id = self._apply_approval_response(
                         manifest=manifest,

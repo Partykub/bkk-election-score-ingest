@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect area3 approved manifests",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc '\nfor src in src_01KVSB50CJCYAJNW2DPR422TD9 src_01KVSC92E11YFHB65GGTEEBB3S; do\n  echo SRC=$src;\n  aws s3 cp s3://bkk-election-images-prod/api-data/score/messages/$src/manifest.json - || true; echo;\n  aws s3 cp s3://bkk-election-images-prod/api-data/score/messages/$src/draft_latest.json - || true; echo;\n  for f in draft_r1.json draft_r2.json draft_r3.json approval_r1.json approval_r2.json approval_r3.json; do\n    echo FILE=$f;\n    aws s3 cp s3://bkk-election-images-prod/api-data/score/messages/$src/$f - || true; echo;\n  done;\n done'"
+    ]
+  }
+}

@@ -3,7 +3,7 @@
   "resource": "governor-results",
   "pageMeta": {
     "electionId": "bkk-governor-2026",
-    "title": "ผลการเลือกตั้งผู้ว่าฯ กรุงเทพมหานคร",
+    "title": "เน€เธยเน€เธเธ…เน€เธยเน€เธเธ’เน€เธเธเน€เธโฌเน€เธเธ…เน€เธเธ—เน€เธเธเน€เธยเน€เธโ€ขเน€เธเธ‘เน€เธยเน€เธยเน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธยเน€เธเธ’เน€เธเธ เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธโฌเน€เธโ€”เน€เธยเน€เธเธเน€เธเธเน€เธเธ’เน€เธยเน€เธยเน€เธเธ",
     "resultStatus": "LIVE_COUNT",
     "generatedAt": "2026-06-05T11:25:02.000Z"
   },
@@ -17,6 +17,8 @@
     "validBallots": 1958000,
     "invalidBallots": 30000,
     "abstainedBallots": 20000,
+    "countedBallots": 2008000,
+    "countedBallotsPercentage": 100.0,
     "validBallotsPercentage": 97.51,
     "invalidBallotsPercentage": 1.49,
     "abstainedBallotsPercentage": 1,
@@ -26,7 +28,7 @@
     {
       "candidateId": "chadchart",
       "candidateNumber": 9,
-      "name": "ชัชชาติ สิทธิพันธุ์",
+      "name": "เน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธเธ’เน€เธโ€ขเน€เธเธ” เน€เธเธเน€เธเธ”เน€เธโ€”เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chadchart/candidate.png",
       "color": "#75B811",
       "voteCount": 600000,
@@ -36,7 +38,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chadchart/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -44,7 +46,7 @@
     {
       "candidateId": "olar",
       "candidateNumber": 15,
-      "name": "โอฬาร ตั้งตราตระกูล",
+      "name": "เน€เธยเน€เธเธเน€เธเธเน€เธเธ’เน€เธเธ เน€เธโ€ขเน€เธเธ‘เน€เธยเน€เธยเน€เธโ€ขเน€เธเธเน€เธเธ’เน€เธโ€ขเน€เธเธเน€เธเธเน€เธยเน€เธเธเน€เธเธ…",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/olar/candidate.png",
       "color": "#051a83",
       "voteCount": 350000,
@@ -54,7 +56,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/olar/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -62,7 +64,7 @@
     {
       "candidateId": "chaiwat",
       "candidateNumber": 10,
-      "name": "ชัยวัฒน์ สถาวรวิจิตร",
+      "name": "เน€เธยเน€เธเธ‘เน€เธเธเน€เธเธเน€เธเธ‘เน€เธโ€เน€เธยเน€เธย เน€เธเธเน€เธโ€“เน€เธเธ’เน€เธเธเน€เธเธเน€เธเธเน€เธเธ”เน€เธยเน€เธเธ”เน€เธโ€ขเน€เธเธ",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chaiwat/candidate.png",
       "color": "#FF6414",
       "voteCount": 280000,
@@ -72,7 +74,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chaiwat/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -80,7 +82,7 @@
     {
       "candidateId": "mallika",
       "candidateNumber": 14,
-      "name": "มัลลิกา มหาสุข",
+      "name": "เน€เธเธเน€เธเธ‘เน€เธเธ…เน€เธเธ…เน€เธเธ”เน€เธยเน€เธเธ’ เน€เธเธเน€เธเธเน€เธเธ’เน€เธเธเน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/mallika/candidate.png",
       "color": "#806DB8",
       "voteCount": 200000,
@@ -90,7 +92,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/mallika/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -98,7 +100,7 @@
     {
       "candidateId": "anucha",
       "candidateNumber": 5,
-      "name": "อนุชา บูรพชัยศรี",
+      "name": "เน€เธเธเน€เธยเน€เธเธเน€เธยเน€เธเธ’ เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธยเน€เธเธ‘เน€เธเธเน€เธเธเน€เธเธเน€เธเธ•",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/anucha/candidate.png",
       "color": "#00A1E7",
       "voteCount": 150000,
@@ -108,7 +110,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/anucha/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -116,7 +118,7 @@
     {
       "candidateId": "chanthep",
       "candidateNumber": 12,
-      "name": "ชาญเทพ เสสะเวช",
+      "name": "เน€เธยเน€เธเธ’เน€เธยเน€เธโฌเน€เธโ€”เน€เธย เน€เธโฌเน€เธเธเน€เธเธเน€เธเธเน€เธโฌเน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/chanthep/candidate.png",
       "color": "#E7C000",
       "voteCount": 100000,
@@ -126,7 +128,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/chanthep/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -134,7 +136,7 @@
     {
       "candidateId": "khomsan",
       "candidateNumber": 13,
-      "name": "คมสัน พันธุ์วิชาติกุล",
+      "name": "เน€เธยเน€เธเธเน€เธเธเน€เธเธ‘เน€เธย เน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ”เน€เธยเน€เธเธ’เน€เธโ€ขเน€เธเธ”เน€เธยเน€เธเธเน€เธเธ…",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/khomsan/candidate.png",
       "color": "#3A58E0",
       "voteCount": 70000,
@@ -144,7 +146,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/khomsan/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -152,7 +154,7 @@
     {
       "candidateId": "prayoon",
       "candidateNumber": 11,
-      "name": "ประยูร ครองยศ",
+      "name": "เน€เธยเน€เธเธเน€เธเธเน€เธเธเน€เธเธเน€เธเธ เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธเน€เธเธ",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prayoon/candidate.png",
       "color": "#51CE67",
       "voteCount": 50000,
@@ -162,7 +164,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/prayoon/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -170,7 +172,7 @@
     {
       "candidateId": "prateep",
       "candidateNumber": 4,
-      "name": "ประทีป วัชรโชคเกษม",
+      "name": "เน€เธยเน€เธเธเน€เธเธเน€เธโ€”เน€เธเธ•เน€เธย เน€เธเธเน€เธเธ‘เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธยเน€เธโฌเน€เธยเน€เธเธเน€เธเธ",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/candidate.png",
       "color": "#7148EF",
       "voteCount": 40000,
@@ -180,7 +182,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/prateep/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -188,7 +190,7 @@
     {
       "candidateId": "veerapoj",
       "candidateNumber": 8,
-      "name": "วีรพจน์ ลือประสิทธิ์สกุล",
+      "name": "เน€เธเธเน€เธเธ•เน€เธเธเน€เธยเน€เธยเน€เธยเน€เธย เน€เธเธ…เน€เธเธ—เน€เธเธเน€เธยเน€เธเธเน€เธเธเน€เธเธเน€เธเธ”เน€เธโ€”เน€เธยเน€เธเธ”เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ…",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/veerapoj/candidate.png",
       "color": "#1764AE",
       "voteCount": 30000,
@@ -198,7 +200,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/veerapoj/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -206,7 +208,7 @@
     {
       "candidateId": "lallana",
       "candidateNumber": 17,
-      "name": "ลลนา มงคลหัสดินทร์",
+      "name": "เน€เธเธ…เน€เธเธ…เน€เธยเน€เธเธ’ เน€เธเธเน€เธยเน€เธยเน€เธเธ…เน€เธเธเน€เธเธ‘เน€เธเธเน€เธโ€เน€เธเธ”เน€เธยเน€เธโ€”เน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/lallana/candidate.png",
       "color": "#166500",
       "voteCount": 25000,
@@ -216,7 +218,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/lallana/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -224,7 +226,7 @@
     {
       "candidateId": "pongsak",
       "candidateNumber": 3,
-      "name": "พงษ์ศักดิ์ พัวพรพงษ์",
+      "name": "เน€เธยเน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ‘เน€เธยเน€เธโ€เน€เธเธ”เน€เธย เน€เธยเน€เธเธ‘เน€เธเธเน€เธยเน€เธเธเน€เธยเน€เธยเน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/candidate.png",
       "color": "#D57AF0",
       "voteCount": 20000,
@@ -234,7 +236,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/pongsak/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -242,7 +244,7 @@
     {
       "candidateId": "phisan",
       "candidateNumber": 6,
-      "name": "พิศาล กิตติเยาวมาลย์",
+      "name": "เน€เธยเน€เธเธ”เน€เธเธเน€เธเธ’เน€เธเธ… เน€เธยเน€เธเธ”เน€เธโ€ขเน€เธโ€ขเน€เธเธ”เน€เธโฌเน€เธเธเน€เธเธ’เน€เธเธเน€เธเธเน€เธเธ’เน€เธเธ…เน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/phisan/candidate.png",
       "color": "#FF4646",
       "voteCount": 15000,
@@ -252,7 +254,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/phisan/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -260,7 +262,7 @@
     {
       "candidateId": "phasapong",
       "candidateNumber": 7,
-      "name": "ภาสพงศ์ ไชยวิริญะวาณิชย์",
+      "name": "เน€เธย เน€เธเธ’เน€เธเธเน€เธยเน€เธยเน€เธเธเน€เธย เน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธเธ”เน€เธเธเน€เธเธ”เน€เธยเน€เธเธเน€เธเธเน€เธเธ’เน€เธโ€เน€เธเธ”เน€เธยเน€เธเธเน€เธย",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/phasapong/candidate.png",
       "color": "#D60039",
       "voteCount": 10000,
@@ -270,7 +272,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/phasapong/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -278,7 +280,7 @@
     {
       "candidateId": "samai",
       "candidateNumber": 2,
-      "name": "สมัย ละเลิศ",
+      "name": "เน€เธเธเน€เธเธเน€เธเธ‘เน€เธเธ เน€เธเธ…เน€เธเธเน€เธโฌเน€เธเธ…เน€เธเธ”เน€เธเธ",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/candidate.png",
       "color": "#1AA7B1",
       "voteCount": 8000,
@@ -288,7 +290,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/samai/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -296,7 +298,7 @@
     {
       "candidateId": "somchai",
       "candidateNumber": 18,
-      "name": "สมชัย เจริญวรเกียรติ",
+      "name": "เน€เธเธเน€เธเธเน€เธยเน€เธเธ‘เน€เธเธ เน€เธโฌเน€เธยเน€เธเธเน€เธเธ”เน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธยเน€เธเธ•เน€เธเธเน€เธเธเน€เธโ€ขเน€เธเธ”",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/somchai/candidate.png",
       "color": "#7c200a",
       "voteCount": 5000,
@@ -306,7 +308,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/somchai/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -314,7 +316,7 @@
     {
       "candidateId": "srirat",
       "candidateNumber": 16,
-      "name": "ศรีรัฏฐ์ ช่างเพ็ชร",
+      "name": "เน€เธเธเน€เธเธเน€เธเธ•เน€เธเธเน€เธเธ‘เน€เธยเน€เธยเน€เธย เน€เธยเน€เธยเน€เธเธ’เน€เธยเน€เธโฌเน€เธยเน€เธยเน€เธยเน€เธเธ",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/srirat/candidate.png",
       "color": "#b5089c",
       "voteCount": 3000,
@@ -324,7 +326,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/srirat/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -332,7 +334,7 @@
     {
       "candidateId": "korakasivat",
       "candidateNumber": 1,
-      "name": "กรกสิวัฒน์ เกษมศรี",
+      "name": "เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ”เน€เธเธเน€เธเธ‘เน€เธโ€เน€เธยเน€เธย เน€เธโฌเน€เธยเน€เธเธเน€เธเธเน€เธเธเน€เธเธเน€เธเธ•",
       "candidateSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/candidate.png",
       "color": "#F76198",
       "voteCount": 2000,
@@ -342,7 +344,7 @@
       "backgroundSrc": "https://w3-dev.ch7.com/api-data/candidates/korakasivat/bg.png",
       "party": {
         "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
-        "name": "ประชาธิปัตย์",
+        "name": "เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธเธ‘เน€เธโ€ขเน€เธเธเน€เธย",
         "color": "#016DDF",
         "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png"
       }
@@ -352,5 +354,9 @@
     "isComplete": false,
     "isDelayed": false,
     "warnings": []
+  },
+  "dataInterpretation": {
+    "mode": "latest_snapshot",
+    "description": "Use the latest available value for each field in each district."
   }
 }

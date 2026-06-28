@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "fix prod districts url and redeploy",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && python3 - <<\"PY\"\nfrom pathlib import Path\npath = Path(\".env\")\ntext = path.read_text(encoding=\"utf-8\")\nold = \"RESULTS_API_DISTRICTS_URL=s3://bkk-election-images-prod/api-data/master-data/election-areas-bangkok.json\"\nnew = \"RESULTS_API_DISTRICTS_URL=s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json\"\nif old in text:\n    text = text.replace(old, new)\nelif \"RESULTS_API_DISTRICTS_URL=\" in text:\n    import re\n    text = re.sub(r\"^RESULTS_API_DISTRICTS_URL=.*$\", new, text, flags=re.M)\nelse:\n    text += \"\\n\" + new + \"\\n\"\npath.write_text(text, encoding=\"utf-8\")\nprint(new)\nPY\nchmod 600 .env && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

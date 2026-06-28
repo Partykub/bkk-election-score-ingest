@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect district catalog exception in container",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import district_catalog\ntry:\n    districts = district_catalog.districts()\n    print(\"DISTRICTS_LEN=\" + str(len(districts)))\n    if districts:\n        print(\"FIRST_ID=\" + str(districts[0].get(\"id\")))\nexcept Exception as exc:\n    print(\"EXC_TYPE=\" + exc.__class__.__name__)\n    print(\"EXC_MSG=\" + str(exc).encode(\"ascii\", \"backslashreplace\").decode())\nPY'"
+    ]
+  }
+}

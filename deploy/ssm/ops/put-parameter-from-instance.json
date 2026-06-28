@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "try create compose env parameter from instance role",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/prod-compose-env-20260623.txt /tmp/prod-compose-env.txt && aws ssm put-parameter --name /election/prod/compose-env --type SecureString --overwrite --value \"$(cat /tmp/prod-compose-env.txt)\" && aws ssm get-parameter --name /election/prod/compose-env --with-decryption --query Parameter.Version --output text'"
+    ]
+  }
+}

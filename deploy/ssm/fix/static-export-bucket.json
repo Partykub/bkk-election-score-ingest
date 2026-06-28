@@ -1,0 +1,16 @@
+{
+    "Comment":  "fix static export bucket to ch7-static and re-export governor-results-dev",
+    "DocumentName":  "AWS-RunShellScript",
+    "InstanceIds":  [
+                        "i-06edd717a43f763b7"
+                    ],
+    "Parameters":  {
+                       "commands":  [
+                                        "set -e",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 python3 - \u003c\u003c\"PY\"\nfrom pathlib import Path\nimport re\npath = Path(\".env\")\ntext = path.read_text(encoding=\"utf-8\")\nupdates = {\n    \"STATIC_RESULTS_S3_BUCKET\": \"ch7-static-bkkelection2569\",\n    \"STATIC_RESULTS_S3_REGION\": \"ap-southeast-1\",\n    \"STATIC_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"GOVERNOR_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"RESULTS_API_STATIC_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"RESULTS_API_DEFAULT_DATA_MODE\": \"latest_snapshot\",\n}\nfor key, value in updates.items():\n    line = f\"{key}={value}\"\n    if re.search(rf\"^{re.escape(key)}=.*$\", text, flags=re.M):\n        text = re.sub(rf\"^{re.escape(key)}=.*$\", line, text, flags=re.M)\n    else:\n        if not text.endswith(\"\\n\"):\n            text += \"\\n\"\n        text += line + \"\\n\"\npath.write_text(text, encoding=\"utf-8\")\nfor key in updates:\n    print(re.search(rf\"^{re.escape(key)}=.*$\", text, flags=re.M).group(0))\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose --env-file .env up -d --no-deps --build line-relay results-api\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T line-relay python - \u003c\u003c\"PY\"\nfrom hermes.supervisor.services.static_results_export import export_static_governor_results\nprint(export_static_governor_results())\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 grep -E \"^(STATIC_RESULTS_S3_BUCKET|STATIC_RESULTS_S3_REGION|STATIC_RESULTS_PREFIX|GOVERNOR_RESULTS_PREFIX|RESULTS_API_STATIC_RESULTS_PREFIX|RESULTS_API_DEFAULT_DATA_MODE)=\" .env\u0027"
+                                    ]
+                   }
+}

@@ -1,0 +1,13 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify prod monitor mock UI and module import",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "curl -fsS http://127.0.0.1:8080/health",
+      "curl -fsS http://127.0.0.1:8080/monitor | grep -o startMockButton | head -1",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T results-api python - <<\"PY\"\nimport json\nfrom urllib.request import urlopen\nfrom hermes.results_api.governor_mock_ticker import build_mock_tick_snapshot, initial_mock_state, load_final_fixture\nfinal = load_final_fixture()\nstate = initial_mock_state(district_count=len(final[\"districts\"]), seed=12345)\nsnapshot, state = build_mock_tick_snapshot(state=state, final_payload=final, districts_per_tick=1)\nresults = sorted(snapshot[\"total\"][\"result\"], key=lambda item: -int(item[\"count\"]))\nprint(json.dumps({\"leader\": results[0][\"candidateId\"], \"openedCount\": state[\"openedCount\"], \"volatilityTick\": state.get(\"volatilityTick\")}))\nPY'"
+    ]
+  }
+}

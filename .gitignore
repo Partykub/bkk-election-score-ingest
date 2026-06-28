@@ -13,6 +13,18 @@ hermes/ocr_worker/runtime-ec2/
 hermes/supervisor/ollama/data/
 recovered-prod.env
 ssm-*.json
+tmp-ssm-*.json
+tmp-*.json
+tmp-*.txt
+scripts/tmp-*
+results-api-local*.log
+.env.results-api-local*
+/deploy/local-artifacts/*
+!/deploy/local-artifacts/README.md
+
+docs/mockupdata/__MACOSX/
+docs/districts.json
+docs/sumary.json
 
 paddle_ocr/
 __pycache__/

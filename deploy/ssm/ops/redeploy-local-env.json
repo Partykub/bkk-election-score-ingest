@@ -1,0 +1,12 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify synced files and redeploy from local env",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "grep -n \"??????????\" /opt/election/hermes/supervisor/services/intake_server.py /opt/election/hermes/ocr_worker/__main__.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && test -f .env && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

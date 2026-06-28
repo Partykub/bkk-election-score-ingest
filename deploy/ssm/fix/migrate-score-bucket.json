@@ -1,0 +1,18 @@
+{
+    "Comment":  "migrate score to ch7-static and switch prod runtime bucket",
+    "DocumentName":  "AWS-RunShellScript",
+    "InstanceIds":  [
+                        "i-06edd717a43f763b7"
+                    ],
+    "Parameters":  {
+                       "commands":  [
+                                        "set -e",
+                                        "aws s3 sync s3://bkk-election-images-prod/api-data/score/ s3://ch7-static-bkkelection2569/api-data/score/",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 python3 - \u003c\u003c\"PY\"\nfrom pathlib import Path\nimport re\npath = Path(\".env\")\ntext = path.read_text(encoding=\"utf-8\")\nupdates = {\n    \"ELECTION_S3_BUCKET\": \"ch7-static-bkkelection2569\",\n    \"RESULTS_API_CANDIDATES_MANIFEST_URL\": \"s3://ch7-static-bkkelection2569/api-data/candidates/manifest.json\",\n    \"RESULTS_API_CANDIDATES_FEATURED_URL\": \"s3://ch7-static-bkkelection2569/api-data/candidates/featured.json\",\n    \"RESULTS_API_PARTIES_URL\": \"s3://ch7-static-bkkelection2569/api-data/master-data/parties.json\",\n    \"RESULTS_API_DISTRICTS_URL\": \"s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json\",\n    \"STATIC_RESULTS_S3_BUCKET\": \"ch7-static-bkkelection2569\",\n    \"GOVERNOR_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"RESULTS_API_STATIC_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"STATIC_RESULTS_PREFIX\": \"api-data/governor-results-dev\",\n    \"RESULTS_API_DEFAULT_DATA_MODE\": \"latest_snapshot\",\n}\nfor key, value in updates.items():\n    line = f\"{key}={value}\"\n    if re.search(rf\"^{re.escape(key)}=.*$\", text, flags=re.M):\n        text = re.sub(rf\"^{re.escape(key)}=.*$\", line, text, flags=re.M)\n    else:\n        if not text.endswith(\"\\n\"):\n            text += \"\\n\"\n        text += line + \"\\n\"\npath.write_text(text, encoding=\"utf-8\")\nfor key in updates:\n    print(re.search(rf\"^{re.escape(key)}=.*$\", text, flags=re.M).group(0))\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 chmod +x deploy/ec2/deploy.sh \u0026\u0026 ./deploy/ec2/deploy.sh\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T results-api python - \u003c\u003c\"PY\"\nfrom hermes.results_api.app import current_data_mode, governor_results_response\npayload = governor_results_response(use_cache=False)\nprint({\"mode\": current_data_mode(), \"countedUnits\": payload.get(\"summary\", {}).get(\"countedUnits\"), \"firstCandidateId\": (payload.get(\"candidates\") or [{}])[0].get(\"candidateId\")})\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T line-relay python - \u003c\u003c\"PY\"\nfrom hermes.supervisor.services.static_results_export import export_static_governor_results\nprint(export_static_governor_results())\nPY\u0027",
+                                        "sudo -u ec2-user bash -lc \u0027cd /opt/election \u0026\u0026 docker compose exec -T results-api env | grep -E \"^(RESULTS_API_S3_BUCKET|RESULTS_API_S3_PREFIX|RESULTS_API_CANDIDATES_MANIFEST_URL|RESULTS_API_CANDIDATES_FEATURED_URL|RESULTS_API_PARTIES_URL|RESULTS_API_DISTRICTS_URL|RESULTS_API_DEFAULT_DATA_MODE|RESULTS_API_STATIC_RESULTS_PREFIX|GOVERNOR_RESULTS_PREFIX)=\"\u0027"
+                                    ]
+                   }
+}

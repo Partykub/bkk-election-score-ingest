@@ -521,6 +521,21 @@ class WorkerProcessingTests(unittest.TestCase):
         self.assertIn("\u0e15\u0e2d\u0e1a '\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19'", prompt)
         self.assertNotIn("\u0e04\u0e30\u0e41\u0e19\u0e19\u0e1c\u0e39\u0e49\u0e2a\u0e21\u0e31\u0e04\u0e23", prompt)
 
+    def test_build_approval_prompt_text_allows_partial_ballot_summary_without_candidate_scores(self):
+        prompt = build_approval_prompt_text(
+            {
+                "revision": 1,
+                "report_type": "ballot_summary",
+                "area_id": "13",
+                "valid_ballots": 3150,
+                "candidate_scores": [],
+            }
+        )
+
+        self.assertIn("\u0e1a\u0e31\u0e15\u0e23\u0e14\u0e35: 3150", prompt)
+        self.assertIn("\u0e15\u0e2d\u0e1a '\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19'", prompt)
+        self.assertNotIn("ยังไม่สามารถยืนยันร่างนี้ได้", prompt)
+
     def test_send_line_push_message_posts_expected_payload(self):
         opener = _RecordingUrlOpen()
 

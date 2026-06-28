@@ -14,7 +14,26 @@
 - `parties.json` - ตัวอย่าง party master data
 - `candidates-featured.json` - ตัวอย่าง candidate catalog ที่ฝัง `party` object ไว้ในผู้สมัครแต่ละคน
 
+## Zero scores (`zero/`)
+
+โฟลเดอร์ `zero/` ใช้ชื่อไฟล์เดียวกับด้านบน แต่คะแนนและสถิติการนับเป็น 0 ทั้งหมด:
+
+- `zero/sumary.json`
+- `zero/sumary-sorkor.json`
+- `zero/districts.json`
+- `zero/districts-sorkor.json`
+
 หมายเหตุ: ชื่อ `sumary*.json` ถูกคงไว้ตามไฟล์ตัวอย่างเดิมเพื่อไม่ทำลาย reference ที่อาจถูกใช้อยู่นอก repo
+
+Live S3 keys สำหรับ ส.ก. (promote จาก `governor-results-bkk` เมื่อ active source = bkk):
+
+- `api-data/governor-results/sumary-sorkor.json`
+- `api-data/governor-results/districts-sorkor.json`
+
+Ingest keys (ก่อน promote):
+
+- `api-data/governor-results-bkk/sumary-sorkor.json`
+- `api-data/governor-results-bkk/districts-sorkor.json`
 
 Runtime notes for these payloads:
 [`../governor-results-runtime.md`](../governor-results-runtime.md)

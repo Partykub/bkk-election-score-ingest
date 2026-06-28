@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect first election area keys",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc '\npython3 - <<\"PY\"\nimport json, subprocess\nraw = subprocess.check_output([\"aws\",\"s3\",\"cp\",\"s3://ch7-static-bkkelection2569/api-data/master-data/election-areas-bangkok.json\",\"-\"], text=True)\npayload = json.loads(raw)\nareas = payload.get(\"electionAreas\") or []\nprint(\"AREAS_LEN=\" + str(len(areas)))\nif areas:\n    first = areas[0]\n    print(\"FIRST_KEYS=\" + \",\".join(sorted(first.keys())))\n    for key in [\"id\",\"name\",\"nameEn\",\"number\",\"areaNumber\",\"districtCode\",\"provinceCode\"]:\n        print(f\"{key.upper()}={first.get(key)}\")\nPY'"
+    ]
+  }
+}

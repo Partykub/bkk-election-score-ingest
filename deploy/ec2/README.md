@@ -193,3 +193,5 @@ deployment ใหม่จากสถานะ production ปัจจุบั
 See also: [`../../docs/governor-results-runtime.md`](../../docs/governor-results-runtime.md)
 for the current governor-results source-of-truth, env flags, public export path,
 and production editing points.
+
+For ad-hoc prod operations via AWS SSM, see [`../ssm/README.md`](../ssm/README.md).

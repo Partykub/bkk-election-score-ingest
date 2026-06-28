@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect prod results api env and logs",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && echo ---ENV--- && grep -E \"^(RESULTS_API_DISTRICTS_URL|RESULTS_API_STATIC_RESULTS_PREFIX|GOVERNOR_RESULTS_PREFIX|RESULTS_API_DEFAULT_DATA_MODE)=\" .env || true && echo ---COMPOSE--- && docker compose exec -T results-api env | grep -E \"^(RESULTS_API_DISTRICTS_URL|RESULTS_API_STATIC_RESULTS_PREFIX|GOVERNOR_RESULTS_PREFIX|RESULTS_API_DEFAULT_DATA_MODE)=\" || true && echo ---LOGS--- && docker compose logs --tail=120 results-api'"
+    ]
+  }
+}

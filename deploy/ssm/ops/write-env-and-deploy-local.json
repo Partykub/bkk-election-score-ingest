@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "write prod env file and run local-env deploy",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/prod-compose-env-20260623.txt .env && chmod 600 .env && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh && docker compose --env-file .env ps && curl -fsS http://127.0.0.1:8080/health && curl -fsS https://54.254.164.95.sslip.io/api/v1/governor-results/summary?fresh=1 >/tmp/prod-summary.json && wc -c /tmp/prod-summary.json'"
+    ]
+  }
+}

@@ -15,6 +15,7 @@ from urllib import error, request
 
 import boto3
 
+from hermes.governor_results.area_resolution import format_area_label, infer_area_id_from_document_hints
 from hermes.supervisor.intake_server import build_correction_form_url_for_source_manifest
 
 
@@ -495,14 +496,31 @@ def draft_has_complete_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
     return all(value is not None for value in required_values)
 
 
+def draft_has_any_ballot_summary(draft_manifest: dict[str, Any]) -> bool:
+    values = (
+        normalize_optional_int(draft_manifest, "eligible_voters"),
+        normalize_optional_int(draft_manifest, "voter_turnout"),
+        normalize_optional_int(draft_manifest, "valid_ballots"),
+        normalize_optional_int(draft_manifest, "invalid_ballots"),
+        normalize_optional_int(draft_manifest, "vote_no", "abstained_ballots"),
+    )
+    return any(value is not None for value in values)
+
+
 def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
     raw_report_type = str(draft_manifest.get("report_type") or "").strip().lower()
     has_scores = draft_has_approvable_candidate_scores(draft_manifest)
-    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+    has_ballot_summary = draft_has_any_ballot_summary(draft_manifest)
 
     if raw_report_type in {"ballot_summary", "turnout_summary", "ballot_accounting_summary"}:
         return "ballot_summary"
     if raw_report_type in {"combined_results_sheet", "combined_score_sheet"}:
+        if has_scores and has_ballot_summary:
+            return "combined_results_sheet"
+        if has_scores:
+            return "election_score_sheet"
+        if has_ballot_summary:
+            return "ballot_summary"
         return "combined_results_sheet"
     if raw_report_type in {"election_score_sheet", "score_sheet", "candidate_results", "candidate_results_report"}:
         if has_scores and has_ballot_summary:
@@ -525,15 +543,13 @@ def inferred_report_type(draft_manifest: dict[str, Any]) -> str:
 def missing_approval_requirements_code(draft_manifest: dict[str, Any]) -> str | None:
     report_type = inferred_report_type(draft_manifest)
     has_scores = draft_has_approvable_candidate_scores(draft_manifest)
-    has_ballot_summary = draft_has_complete_ballot_summary(draft_manifest)
+    has_ballot_summary = draft_has_any_ballot_summary(draft_manifest)
 
     if report_type == "ballot_summary" and not has_ballot_summary:
         return "BALLOT_SUMMARY_REQUIRED"
     if report_type == "combined_results_sheet":
         if not has_scores:
             return "CANDIDATE_SCORES_REQUIRED"
-        if not has_ballot_summary:
-            return "BALLOT_SUMMARY_REQUIRED"
     if report_type == "election_score_sheet" and not has_scores:
         return "CANDIDATE_SCORES_REQUIRED"
     if report_type == "other" and not (has_scores or has_ballot_summary):
@@ -631,10 +647,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     ballot_summary_lines = build_ballot_summary_lines(draft_manifest)
 
     lines = [f"ตรวจรูปเสร็จแล้ว: ร่างครั้งที่ {revision}"]
-    if area_id:
-        lines.append(f"เขต: {area_id}")
-    else:
-        lines.append("เขต: ยังไม่พบ")
+    lines.append(format_area_label(area_id))
     if polling_unit_id:
         lines.append(f"หน่วย: {polling_unit_id}")
     lines.append(f"เอกสาร: {report_type}")
@@ -657,7 +670,7 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
     if not area_id:
         lines.append("ยังยืนยันร่างนี้ไม่ได้จนกว่าจะระบุเขต")
         lines.append("กรุณาระบุเขตให้ถูกต้องก่อนบันทึก")
-        lines.append("ตอบ 'แก้ไข เขต 13' หรือระบุเขตที่ถูกต้องก่อนบันทึก")
+        lines.append("ตอบ 'แก้ไข เขต 13' หรือ 'แก้ไข เขต หนองจอก' ก่อนบันทึก")
 
     approval_requirements_code = missing_approval_requirements_code(draft_manifest)
     if approval_requirements_code == "CANDIDATE_SCORES_REQUIRED":
@@ -665,12 +678,12 @@ def build_approval_prompt_text(draft_manifest: dict[str, Any]) -> str:
         lines.append("กรุณาแก้ไขคะแนนผ่านแชทก่อนบันทึก เช่น 'แก้ไข 4=14'")
 
     if approval_requirements_code == "BALLOT_SUMMARY_REQUIRED":
-        lines.append("เธขเธฑเธเธขเธทเธเธขเธฑเธเธฃเนเธฒเธเธเธตเนเนเธกเนเนเธ”เนเธเธเธเธงเนเธฒเธเธฐเธกเธตเธเนเธญเธกเธนเธฅเธชเธฃเธธเธเธเธณเธเธงเธเธเธฑเธ•เธฃเธเธฃเธ")
-        lines.append("เธเธฃเธธเธ“เธฒเนเธเนเนเธเธเนเธญเธกเธนเธฅเธเธนเธกเธตเธชเธดเธ—เธเธด, เธเธนเธกเธฒเนเธเนเธชเธดเธ—เธเธด, เธเธฑเธ•เธฃเธ”เธต, เธเธฑเธ•เธฃเน€เธชเธตเธข, เธฅเธฐ Vote No เนเธซเนเธเธฃเธเธเนเธญเธเธเธฑเธเธ—เธถเธ")
+        lines.append("ยังไม่สามารถยืนยันร่างนี้ได้ เพราะยังไม่พบข้อมูลสรุปบัตรที่อ่านได้")
+        lines.append("กรุณาแก้ไขข้อมูล ผู้มีสิทธิ, ผู้มาใช้สิทธิ, บัตรดี, บัตรเสีย หรือ Vote No อย่างน้อย 1 รายการก่อนบันทึก")
     if draft_can_be_approved(draft_manifest):
         lines.append("ตอบ 'ยืนยัน' เพื่อรับรองร่างนี้")
     lines.append("ตอบ 'แก้ไข' เพื่อเริ่มแก้ข้อมูล หรือพิมพ์ เช่น 'แก้ไข 4=14'")
-    lines.append("ตอบ 'ไม่ถูกต้อง' หากต้องการปฏิเสธร่างนี้")
+    lines.append("ตอบ 'ปฏิเสธร่าง' หากต้องการปฏิเสธร่างนี้")
     return "\n".join(lines)
 
 def build_line_text_message(text: str) -> dict[str, Any]:
@@ -704,7 +717,7 @@ def build_approval_quick_reply_items(*, correction_url: str | None = None, allow
             {
                 "type": "action",
                 "imageUrl": None,
-                "action": {"type": "message", "label": "ไม่ถูกต้อง", "text": "ไม่ถูกต้อง"},
+                "action": {"type": "message", "label": "ปฏิเสธร่าง", "text": "ปฏิเสธร่าง"},
             },
         ]
     )
@@ -930,9 +943,9 @@ def maybe_send_ocr_failure_notice(
 def build_ocr_prompt(*, downloaded_job: DownloadedJob, model_name: str, prompt_version: str) -> str:
     return (
         "คุณคือผู้ช่วยดึงข้อมูลจากรูปภาพใบนับคะแนนเลือกตั้ง (ภาษาไทย) "
-        "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่ใช้ระบุเขตของเอกสาร เช่น 'เขต 3', 'เขตเลือกตั้ง 3', 'ลำดับเขต 3' หรือ sticky note/ข้อความกำกับด้านบนของภาพที่ใช้ระบุเขต (area_id) "
+        "กรุณาถอดข้อความและตัวเลขทั้งหมดที่เห็นในรูปภาพ โดยเฉพาะข้อความที่ใช้ระบุเขตของเอกสาร เช่น 'เขต 3', 'เขตเลือกตั้ง 3', 'ลำดับเขต 3', ชื่อเขต เช่น 'หนองจอก', 'พระนคร' หรือ sticky note/ข้อความกำกับด้านบนของภาพที่ใช้ระบุเขต (area_id) "
         "ให้หาตัวเลขคะแนนของผู้สมัครแต่ละคน และให้หาข้อมูลสรุปจำนวนบัตรด้วย ได้แก่ ผู้มีสิทธิเลือกตั้ง (eligible_voters), ผู้มาใช้สิทธิ (voter_turnout), บัตรดี (valid_ballots), บัตรเสีย (invalid_ballots), และไม่ประสงค์ลงคะแนน/ไม่ออกคะแนน (vote_no) จากนั้นนำข้อมูลทั้งหมดมาจัดเรียงในรูปแบบ JSON ตามโครงสร้างด้านล่างนี้เท่านั้น ห้ามพิมพ์ข้อความอธิบายใดๆ เพิ่มเติม หากไม่พบข้อมูลใดให้ใส่ null\n\n"
-        "ข้อควรระวัง: ให้หา area_id จากบริบทที่เป็นป้ายระบุเขตของเอกสาร ไม่ใช่จากตารางคะแนนผู้สมัครหรือเลขลำดับแถว ห้ามเดา area_id จากคะแนน, หมายเลขผู้สมัคร, หมายเลขหน่วย, หรือเลขอื่นที่ไม่ชัดว่าเป็นเขต หากไม่แน่ใจให้ใส่ null\n\n"
+        "ข้อควรระวัง: ให้หา area_id จากบริบทที่เป็นป้ายระบุเขตของเอกสาร ไม่ใช่จากตารางคะแนนผู้สมัครหรือเลขลำดับแถว ห้ามเดา area_id จากคะแนน, หมายเลขผู้สมัคร, หมายเลขหน่วย, หรือเลขอื่นที่ไม่ชัดว่าเป็นเขต หากเห็นเฉพาะชื่อเขต เช่น 'เขตราชเทวี' หรือ 'ราชเทวี' ให้ใส่ชื่อเขตใน area_id ได้ ไม่ต้องใส่ null เพียงเพราะไม่มีเลขเขต\n\n"
         "ตัวอย่างถ้าในรูปมีข้อความ 'เขต 3', มีผู้มีสิทธิ 100, ผู้มาใช้สิทธิ 80, บัตรดี 70, บัตรเสีย 5, ไม่ออกคะแนน 5, และมีคะแนนเบอร์ 1 ได้ 120 คะแนน ให้ตอบ JSON แบบนี้:\n"
         "{\n"
         '  "document_type": "election_score_sheet",\n'
@@ -1075,7 +1088,12 @@ def build_draft_documents(
         overall_confidence = 0.0
         validation_flags = sorted(set(validation_flags + ["low_confidence", "requires_human_review"]))
 
-    area_id = normalized_payload.get("area_id")
+    area_id = infer_area_id_from_document_hints(
+        area_id=normalized_payload.get("area_id"),
+        notes=normalized_payload.get("notes"),
+        summary_text=normalized_payload.get("summary_text"),
+        raw_model_text=raw_model_text,
+    )
     if area_id is None or str(area_id).strip() == "":
         validation_flags = sorted(set(validation_flags + ["missing_area_id", "requires_human_review"]))
     eligible_voters = normalize_optional_int(normalized_payload, "eligible_voters", "eligibleVoters")

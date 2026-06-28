@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "redeploy results api key-wise latest snapshot merge using local env",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && test -f .env && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh && docker compose --env-file .env exec -T results-api python -c \"from hermes.results_api.app import export_static_governor_results; print(export_static_governor_results())\"'"
+    ]
+  }
+}

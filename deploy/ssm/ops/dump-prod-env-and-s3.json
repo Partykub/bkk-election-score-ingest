@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "dump prod env and inspect approved results",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && echo ---ENVFILE--- && cat .env && echo ---S3-AREAS--- && aws s3 ls s3://bkk-election-images-prod/indexes/by-area/default/ || true && echo ---CHECK-AREA3--- && aws s3 ls s3://bkk-election-images-prod/indexes/by-area/default/3/ || true && echo ---STATIC-SUMMARY--- && aws s3 ls s3://ch7-static-bkkelection2569/api-data/governor-results/ || true'"
+    ]
+  }
+}

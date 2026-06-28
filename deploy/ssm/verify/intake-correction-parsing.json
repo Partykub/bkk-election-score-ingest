@@ -1,0 +1,10 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "verify intake correction parsing deploy",
+  "Parameters": {
+    "commands": [
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python - <<\"PY\"\nfrom pathlib import Path\nfrom hermes.supervisor.intake_server import parse_ballot_summary_overrides, parse_candidate_score_overrides\nsource = Path(\"/app/hermes/supervisor/services/intake_server.py\").read_text(encoding=\"utf-8\")\nassert \"looks_like_candidate_score_correction_text\" in source\nassert \"BALLOT_LINE_FIELD_BY_NUMBER\" not in source\nassert parse_ballot_summary_overrides(\"vote no 30\") == {\"vote_no\": 30}\nassert parse_candidate_score_overrides(\"4=14\")[0].candidate_number == 4\nprint(\"VERIFY_OK\")\nPY'"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "restore env backup and redeploy",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "cd /opt/election",
+      "cp .env.bak-20260622-093700 .env",
+      "chown ec2-user:ec2-user .env",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

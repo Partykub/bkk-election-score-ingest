@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "summarize area3 drafts ascii",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc '\npython3 - <<\"PY\"\nimport json, subprocess\nsources = [\"src_01KVSB50CJCYAJNW2DPR422TD9\", \"src_01KVSC92E11YFHB65GGTEEBB3S\"]\nfor src in sources:\n    print(\"SRC=\" + src)\n    for key in [f\"api-data/score/messages/{src}/manifest.json\", f\"api-data/score/messages/{src}/draft_r1.json\", f\"api-data/score/messages/{src}/draft_r2.json\", f\"api-data/score/messages/{src}/approval_r1.json\", f\"api-data/score/messages/{src}/approval_r2.json\"]:\n        try:\n            raw = subprocess.check_output([\"aws\",\"s3\",\"cp\",f\"s3://bkk-election-images-prod/{key}\",\"-\"], text=True)\n            obj = json.loads(raw)\n            print(\"KEY=\" + key.rsplit(\"/\",1)[-1])\n            summary = {\n                \"state\": obj.get(\"state\"),\n                \"current_draft_key\": obj.get(\"current_draft_key\"),\n                \"report_type\": obj.get(\"report_type\"),\n                \"area_id\": obj.get(\"area_id\"),\n                \"candidate_scores_len\": len(obj.get(\"candidate_scores\", [])) if isinstance(obj.get(\"candidate_scores\"), list) else None,\n                \"candidate_scores\": obj.get(\"candidate_scores\"),\n                \"eligible_voters\": obj.get(\"eligible_voters\"),\n                \"voter_turnout\": obj.get(\"voter_turnout\"),\n                \"valid_ballots\": obj.get(\"valid_ballots\"),\n                \"invalid_ballots\": obj.get(\"invalid_ballots\"),\n                \"vote_no\": obj.get(\"vote_no\"),\n                \"abstained_ballots\": obj.get(\"abstained_ballots\"),\n                \"responded_at\": obj.get(\"responded_at\"),\n            }\n            print(json.dumps(summary, ensure_ascii=True))\n        except subprocess.CalledProcessError:\n            print(\"KEY=\" + key.rsplit(\"/\",1)[-1])\n            print(\"MISSING\")\nPY'"
+    ]
+  }
+}

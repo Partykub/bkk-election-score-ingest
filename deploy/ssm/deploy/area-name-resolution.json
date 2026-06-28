@@ -1,0 +1,30 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "deploy LINE area name resolution + district label in approval prompt",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "TS=area-name-resolution-20260626c",
+      "BUCKET=ch7-static-bkkelection2569",
+      "PREFIX=s3://${BUCKET}/tmp/deploy",
+      "install -d -o ec2-user -g ec2-user /opt/election/hermes/governor_results",
+      "for f in intake_server __main__ area_resolution test_area_resolution compose; do :; done",
+      "if [ -f /opt/election/hermes/supervisor/services/intake_server.py ]; then cp /opt/election/hermes/supervisor/services/intake_server.py /opt/election/hermes/supervisor/services/intake_server.py.bak-${TS}; fi",
+      "if [ -f /opt/election/hermes/ocr_worker/__main__.py ]; then cp /opt/election/hermes/ocr_worker/__main__.py /opt/election/hermes/ocr_worker/__main__.py.bak-${TS}; fi",
+      "if [ -f /opt/election/compose.yaml ]; then cp /opt/election/compose.yaml /opt/election/compose.yaml.bak-${TS}; fi",
+      "aws s3 cp ${PREFIX}/hermes-supervisor-intake-server-${TS}.py /opt/election/hermes/supervisor/services/intake_server.py",
+      "aws s3 cp ${PREFIX}/hermes-ocr-worker-main-${TS}.py /opt/election/hermes/ocr_worker/__main__.py",
+      "aws s3 cp ${PREFIX}/hermes-governor-results-area-resolution-${TS}.py /opt/election/hermes/governor_results/area_resolution.py",
+      "aws s3 cp ${PREFIX}/hermes-governor-results-test-area-resolution-${TS}.py /opt/election/hermes/governor_results/test_area_resolution.py",
+      "aws s3 cp ${PREFIX}/compose-${TS}.yaml /opt/election/compose.yaml",
+      "chown -R ec2-user:ec2-user /opt/election/hermes/governor_results /opt/election/hermes/supervisor/services/intake_server.py /opt/election/hermes/ocr_worker/__main__.py /opt/election/compose.yaml",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env config --quiet'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env up -d --no-deps --build line-relay ocr-worker'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && for svc in line-relay ocr-worker; do c=election-${svc}-1; for i in $(seq 1 30); do status=$(docker inspect --format \"{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}\" $c 2>/dev/null || echo missing); echo $svc=$status; if [ \"$status\" = \"healthy\" ] || [ \"$status\" = \"running\" ]; then break; fi; sleep 2; done; done'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python -m unittest hermes.governor_results.test_area_resolution -v'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python - <<\"PY\"\nfrom pathlib import Path\nfrom hermes.governor_results.area_resolution import parse_area_id_from_text, format_area_label\nfrom unittest.mock import patch, MagicMock\nlookup = MagicMock()\nlookup.resolve_area_id.return_value = \"3\"\nlookup.format_area_label.return_value = \"area-label-ok\"\nwith patch(\"hermes.governor_results.area_resolution.get_district_lookup\", return_value=lookup):\n    assert parse_area_id_from_text(\"area 3\") == \"3\"\n    assert format_area_label(\"3\") == \"area-label-ok\"\nsource = Path(\"/app/hermes/governor_results/area_resolution.py\").read_text(encoding=\"utf-8\")\nassert \"parse_area_id_from_text\" in source\nprint(\"VERIFY_OK\")\nPY'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay /bin/sh -lc \"env | grep RESULTS_API_DISTRICTS_URL\"'"
+    ]
+  }
+}

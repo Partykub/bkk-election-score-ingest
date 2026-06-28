@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect prod env file and running results-api env",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && echo ENV_FILE && (test -f .env && sed -n \"1,140p\" .env || echo no_env) && echo COMPOSE_PS && docker compose ps && echo RESULTS_API_ENV && docker inspect $(docker compose ps -q results-api) --format \"{{range .Config.Env}}{{println .}}{{end}}\" | sort'"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "sync latest results-api app and redeploy",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "aws s3 cp s3://ch7-static-bkkelection2569/tmp/deploy/hermes-results-api-app-20260623-095823.py /opt/election/hermes/results_api/app.py",
+      "chown ec2-user:ec2-user /opt/election/hermes/results_api/app.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env config --quiet && chmod +x deploy/ec2/deploy.sh && ./deploy/ec2/deploy.sh'"
+    ]
+  }
+}

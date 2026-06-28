@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect prod logs after monitor removal",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose ps && echo __LOGS__ && docker compose logs --tail=80 line-relay ocr-worker results-api'"
+    ]
+  }
+}

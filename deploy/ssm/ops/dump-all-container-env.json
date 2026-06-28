@@ -1,0 +1,11 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "dump running container env for prod reconstruction",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'for name in election-hermes-supervisor-1 election-line-relay-1 election-ocr-worker-1 election-results-api-1 election-caddy-1; do echo ==== $name ====; docker inspect $name --format \"{{range .Config.Env}}{{println .}}{{end}}\" | sort; done'"
+    ]
+  }
+}

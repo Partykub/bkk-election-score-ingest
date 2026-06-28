@@ -1,0 +1,20 @@
+{
+  "InstanceIds": ["i-06edd717a43f763b7"],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "deploy intake_server correction parsing improvements",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "TS=intake-correction-parsing-20260624",
+      "BUCKET=ch7-static-bkkelection2569",
+      "PREFIX=s3://${BUCKET}/tmp/deploy",
+      "if [ -f /opt/election/hermes/supervisor/services/intake_server.py ]; then cp /opt/election/hermes/supervisor/services/intake_server.py /opt/election/hermes/supervisor/services/intake_server.py.bak-${TS}; fi",
+      "aws s3 cp ${PREFIX}/hermes-supervisor-intake-server-${TS}.py /opt/election/hermes/supervisor/services/intake_server.py",
+      "chown ec2-user:ec2-user /opt/election/hermes/supervisor/services/intake_server.py",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose --env-file .env up -d --no-deps --build line-relay'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && for i in $(seq 1 30); do status=$(docker inspect --format \"{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}\" election-line-relay-1); echo line-relay=$status; if [ \"$status\" = \"healthy\" ] || [ \"$status\" = \"running\" ]; then break; fi; sleep 2; done'",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && docker compose exec -T line-relay python - <<\"PY\"\nfrom pathlib import Path\nfrom hermes.supervisor.intake_server import (\n    parse_ballot_summary_overrides,\n    parse_candidate_score_overrides,\n    looks_like_candidate_score_correction_text,\n)\nsource = Path(\"/opt/election/hermes/supervisor/services/intake_server.py\").read_text(encoding=\"utf-8\")\nassert \"looks_like_candidate_score_correction_text\" in source\nassert \"BALLOT_LINE_FIELD_BY_NUMBER\" not in source\nassert parse_ballot_summary_overrides(\"vote no 30\") == {\"vote_no\": 30}\nassert parse_candidate_score_overrides(\"4=14\")[0].candidate_number == 4\nassert parse_candidate_score_overrides(\"vote no 30\") == []\nprint(\"intake_server correction parsing OK\")\nPY'",
+      "grep -c BALLOT_LINE_FIELD_BY_NUMBER /opt/election/hermes/supervisor/services/intake_server.py && exit 1 || echo no-line-mapping-ok"
+    ]
+  }
+}

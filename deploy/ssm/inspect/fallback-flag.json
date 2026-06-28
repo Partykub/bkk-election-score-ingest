@@ -1,0 +1,13 @@
+{
+  "InstanceIds": [
+    "i-06edd717a43f763b7"
+  ],
+  "DocumentName": "AWS-RunShellScript",
+  "Comment": "inspect fallback flag in prod",
+  "Parameters": {
+    "commands": [
+      "set -e",
+      "sudo -u ec2-user bash -lc 'cd /opt/election && echo FILE_FLAG=$(grep -E \"^RESULTS_API_ENABLE_STATIC_FALLBACK=\" .env | tail -n 1 || true) && echo CONTAINER_FLAG=$(docker compose exec -T results-api env | grep -E \"^RESULTS_API_ENABLE_STATIC_FALLBACK=\" | tail -n 1 || true) && docker compose exec -T results-api python - <<\"PY\"\nfrom hermes.results_api.app import settings\nprint(\"SETTINGS_FLAG=\" + str(settings.enable_static_results_fallback))\nPY'"
+    ]
+  }
+}

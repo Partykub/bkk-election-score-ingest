@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0",
+  "resource": "sorkor-results",
+  "pageMeta": {
+    "electionId": "bkk-governor-2026",
+    "title": "ผลการเลือก ส.ก. กรุงเทพมหานคร",
+    "resultStatus": "LIVE_COUNT",
+    "generatedAt": "2026-06-05T11:25:02.000Z"
+  },
+  "summary": {
+    "countedUnits": 0,
+    "totalUnits": 99954,
+    "countedPercentage": 0,
+    "eligibleVoters": 5000000,
+    "voterTurnout": 0,
+    "voterTurnoutPercentage": 0,
+    "validBallots": 0,
+    "invalidBallots": 0,
+    "abstainedBallots": 0,
+    "% บัตรเสีย": 0,
+    "lastUpdatedAt": "2026-06-05T11:25:02.000Z",
+    "party": [
+      {
+        "id": "d7155f6d-736d-42c0-8bc0-00ee6e1970dc",
+        "name": "ประชาธิปัตย์",
+        "color": "#016DDF",
+        "logoUrl": "https://www.ch7.com/election2569/api-data/master-data/images/parties/8.png",
+        "totalSeat": 20
+      }
+    ]
+  }
+}

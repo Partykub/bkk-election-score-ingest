@@ -2,10 +2,22 @@ import io
 import json
 import tempfile
 import unittest
+from time import monotonic
 from unittest import mock
+from unittest.mock import patch
 from pathlib import Path
 
-from hermes.supervisor.intake_server import LocalStateStore, S3JsonStateBackend, parse_area_id_override
+from hermes.governor_results.area_resolution import DistrictLookup
+from hermes.supervisor.intake_server import (
+    LocalStateStore,
+    S3JsonStateBackend,
+    build_approval_prompt_text,
+    looks_like_area_correction_text,
+    looks_like_ballot_summary_correction_text,
+    parse_area_id_override,
+    parse_ballot_summary_overrides,
+    resolve_correction_overrides,
+)
 
 
 class _FakeMissingKeyError(Exception):
@@ -180,6 +192,7 @@ class LocalStateStoreTests(unittest.TestCase):
         s3_client = _RecordingS3Client()
         queue_client = _RecordingQueueClient()
         reply_sender = _RecordingReplySender()
+        static_results_exporter = mock.Mock(return_value={"status": "static_results_exported"})
         state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
         update_job_queue = SqsUpdateJobQueue(
             queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
@@ -192,6 +205,7 @@ class LocalStateStoreTests(unittest.TestCase):
             upload_service=_FakeUploadService(storage_backend="s3"),
             update_job_queue=update_job_queue,
             line_reply_sender=reply_sender,
+            static_results_exporter=static_results_exporter,
         )
         source_manifest = {
             "source_message_id": "src_01JXIMAGE777",
@@ -254,6 +268,7 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(queue_payload["update_job_id"], "upd_approval_src_01JXIMAGE777_r1")
         self.assertEqual(queue_payload["manifest_bucket"], "election-system")
         self.assertEqual(queue_payload["manifest_key"], "dev/messages/src_01JXIMAGE777/update_job.json")
+        static_results_exporter.assert_called_once_with()
         self.assertEqual(len(reply_sender.messages), 1)
         self.assertIn("รับรองผลเรียบร้อยแล้ว", reply_sender.messages[0]["text"])
         self.assertIn("ผลร่างล่าสุด: ครั้งที่ 1", reply_sender.messages[0]["text"])
@@ -557,6 +572,74 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(updated_approval["state"], "approved")
         self.assertEqual(len(queue_client.messages), 1)
 
+    def test_approval_command_allows_partial_ballot_summary_without_candidate_scores(self) -> None:
+        s3_client = _RecordingS3Client()
+        queue_client = _RecordingQueueClient()
+        state_backend = S3JsonStateBackend(bucket_name="election-system", key_prefix="dev", client=s3_client)
+        update_job_queue = SqsUpdateJobQueue(
+            queue_url="https://sqs.ap-southeast-1.amazonaws.com/123/update-jobs.fifo",
+            region_name="ap-southeast-1",
+            client=queue_client,
+        )
+        store = LocalStateStore(
+            self.temp_dir.name,
+            state_backend=state_backend,
+            upload_service=_FakeUploadService(storage_backend="s3"),
+            update_job_queue=update_job_queue,
+        )
+        source_manifest = {
+            "source_message_id": "src_01JXIMAGE777D",
+            "workflow_session_id": "line_group_C123",
+            "state": "awaiting_approval",
+            "sender_user_id": "U123",
+            "current_draft_id": "draft_src_01JXIMAGE777D_r1",
+            "current_draft_key": "dev/messages/src_01JXIMAGE777D/draft_r1.json",
+            "current_approval_id": "approval_src_01JXIMAGE777D_r1",
+            "current_approval_key": "dev/messages/src_01JXIMAGE777D/approval_r1.json",
+        }
+        approval_manifest = {
+            "approval_id": "approval_src_01JXIMAGE777D_r1",
+            "draft_id": "draft_src_01JXIMAGE777D_r1",
+            "draft_revision": 1,
+            "requested_from_user_id": "U123",
+            "state": "awaiting_approval",
+        }
+        draft_manifest = {
+            "draft_id": "draft_src_01JXIMAGE777D_r1",
+            "election_id": "election-2026",
+            "area_id": "13",
+            "polling_unit_id": "07",
+            "report_type": "ballot_summary",
+            "valid_ballots": 70,
+            "candidate_scores": [],
+        }
+        session_pointer = {
+            "workflow_session_id": "line_group_C123",
+            "latest_source_message_id": "src_01JXIMAGE777D",
+            "source_type": "image",
+            "updated_at": "2026-06-08T07:29:00Z",
+        }
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777D/manifest.json", Body=json.dumps(source_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777D/approval_r1.json", Body=json.dumps(approval_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/messages/src_01JXIMAGE777D/draft_r1.json", Body=json.dumps(draft_manifest).encode("utf-8"))
+        s3_client.put_object(Bucket="election-system", Key="dev/sessions/line_group_C123/latest.json", Body=json.dumps(session_pointer).encode("utf-8"))
+
+        result = store.persist_line_event(
+            {
+                "type": "message",
+                "webhookEventId": "01JXAPPROVE777D",
+                "replyToken": "reply-token-approve-d",
+                "source": {"type": "group", "groupId": "C123", "userId": "U123"},
+                "message": {"id": "550000777D", "type": "text", "text": "ยืนยัน"},
+            },
+            received_at="2026-06-08T07:45:00Z",
+        )
+
+        self.assertEqual(result.state, "approved")
+        updated_approval = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE777D/approval_r1.json")].decode("utf-8"))
+        self.assertEqual(updated_approval["state"], "approved")
+        self.assertEqual(len(queue_client.messages), 1)
+
     def test_correction_command_creates_corrected_draft_and_new_approval(self) -> None:
         s3_client = _RecordingS3Client()
         push_sender = _RecordingPushSender()
@@ -639,7 +722,7 @@ class LocalStateStoreTests(unittest.TestCase):
         quick_reply_actions = [
             item["action"]["text"] for item in push_sender.messages[0]["messages"][0]["quickReply"]["items"]
         ]
-        self.assertEqual(quick_reply_actions, ["แก้ไข", "ไม่ถูกต้อง"])
+        self.assertEqual(quick_reply_actions, ["แก้ไข", "ปฏิเสธร่าง"])
         self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE888/update_job.json"), s3_client.objects)
 
     def test_reject_command_replies_with_closed_round_message(self) -> None:
@@ -826,7 +909,8 @@ class LocalStateStoreTests(unittest.TestCase):
         self.assertEqual(original_source["pending_user_action"], "awaiting_correction_input")
         self.assertNotIn(("election-system", "dev/messages/src_01JXIMAGE890/draft_r2.json"), s3_client.objects)
         self.assertEqual(len(reply_sender.messages), 1)
-        self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
+        self.assertIn("4=14", reply_sender.messages[0]["text"])
+        self.assertIn("บัตรดี 850", reply_sender.messages[0]["text"])
         self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_raw_override_after_edit_button_creates_corrected_draft(self) -> None:
@@ -1044,7 +1128,8 @@ class LocalStateStoreTests(unittest.TestCase):
         original_source = json.loads(s3_client.objects[("election-system", "dev/messages/src_01JXIMAGE892/manifest.json")].decode("utf-8"))
         self.assertEqual(original_source["state"], "awaiting_approval")
         self.assertEqual(len(reply_sender.messages), 1)
-        self.assertIn("แก้ไข ผู้สมัครเบอร์ 4 เป็น 14", reply_sender.messages[0]["text"])
+        self.assertIn("4=14", reply_sender.messages[0]["text"])
+        self.assertIn("บัตรดี 850", reply_sender.messages[0]["text"])
         self.assertIsNone(reply_sender.messages[0]["messages"])
 
     def test_generic_text_during_awaiting_approval_receives_fallback_reply(self) -> None:
@@ -1885,7 +1970,7 @@ class ReviewQueueTests(unittest.TestCase):
         )
 
         reject_result = self.store.persist_line_event(
-            self._make_approval_event("REJECT_001", "ไม่ถูกต้อง"),
+            self._make_approval_event("REJECT_001", "ปฏิเสธร่าง"),
             received_at="2026-06-10T10:05:00Z",
         )
 
@@ -1895,6 +1980,30 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(sp_after["active_review_source_message_id"], "src_IMG_REJ_002")
         self.assertEqual(sp_after["pending_review_queue"], [])
         self.assertEqual(sp_after["completed_review_count"], 1)
+
+    def test_legacy_reject_text_still_rejects_draft(self) -> None:
+        self._setup_awaiting_approval("src_IMG_REJ_LEGACY_001")
+        sp = {
+            "workflow_session_id": "line_group_CGRP_MULTI",
+            "active_review_source_message_id": "src_IMG_REJ_LEGACY_001",
+            "pending_review_queue": [],
+            "completed_review_count": 0,
+            "latest_source_message_id": "src_IMG_REJ_LEGACY_001",
+            "source_type": "image",
+            "updated_at": "2026-06-10T10:00:00Z",
+        }
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key="dev/sessions/line_group_CGRP_MULTI/latest.json",
+            Body=json.dumps(sp).encode("utf-8"),
+        )
+
+        reject_result = self.store.persist_line_event(
+            self._make_approval_event("REJECT_LEGACY_001", "ไม่ถูกต้อง"),
+            received_at="2026-06-10T10:05:00Z",
+        )
+
+        self.assertEqual(reject_result.state, "rejected")
 
     def test_image_during_review_appends_to_queue(self) -> None:
         """Sending a new image while review is active should append it to the queue."""
@@ -1973,6 +2082,224 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(parse_area_id_override("เขต=101"), "101")
         self.assertEqual(parse_area_id_override("แก้ไขเขต: 12"), "12")
         self.assertIsNone(parse_area_id_override("แก้ไข เบอร์ 4=14"))
+
+    def test_parse_ballot_summary_overrides(self) -> None:
+        overrides = parse_ballot_summary_overrides(
+            "แก้ไข ผู้มีสิทธิ 1000 ผู้มาใช้สิทธิ 900 บัตรดี 850 บัตรเสีย 20 Vote No 30"
+        )
+
+        self.assertEqual(
+            overrides,
+            {
+                "eligible_voters": 1000,
+                "voter_turnout": 900,
+                "valid_ballots": 850,
+                "invalid_ballots": 20,
+                "vote_no": 30,
+            },
+        )
+
+    def test_parse_ballot_summary_overrides_accepts_short_turnout_label(self) -> None:
+        overrides = parse_ballot_summary_overrides("ผู้ใช้สิทธิ 900")
+
+        self.assertEqual(overrides, {"voter_turnout": 900})
+        self.assertTrue(looks_like_ballot_summary_correction_text("ผู้ใช้สิทธิ 900"))
+
+    def test_parse_ballot_summary_overrides_comprehensive_forms(self) -> None:
+        cases = [
+            ("ผู้มีสิทธิ 1000", {"eligible_voters": 1000}),
+            ("ผู้มีสิทธิเลือกตั้ง 1000", {"eligible_voters": 1000}),
+            ("ผู้มาใช้สิทธิ 900", {"voter_turnout": 900}),
+            ("ผู้ใช้สิทธิ 900", {"voter_turnout": 900}),
+            ("มาใช้สิทธิ 900", {"voter_turnout": 900}),
+            ("บัตรดี 850", {"valid_ballots": 850}),
+            ("บัตรดี=850", {"valid_ballots": 850}),
+            ("850 บัตรดี", {"valid_ballots": 850}),
+            ("ดี 850", {"valid_ballots": 850}),
+            ("บัตรเสีย 20", {"invalid_ballots": 20}),
+            ("เสีย 20", {"invalid_ballots": 20}),
+            ("Vote No 30", {"vote_no": 30}),
+            ("ไม่ออกเสียง 30", {"vote_no": 30}),
+            ("ไม่ออกคะแนน 30", {"vote_no": 30}),
+            ("งดออกเสียง 30", {"vote_no": 30}),
+            (
+                "ผู้มีสิทธิ 1000 ผู้ใช้สิทธิ 900 บัตรดี 850 บัตรเสีย 20 Vote No 30",
+                {
+                    "eligible_voters": 1000,
+                    "voter_turnout": 900,
+                    "valid_ballots": 850,
+                    "invalid_ballots": 20,
+                    "vote_no": 30,
+                },
+            ),
+        ]
+        for message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(parse_ballot_summary_overrides(message), expected)
+                self.assertTrue(looks_like_ballot_summary_correction_text(message))
+
+    def test_parse_area_id_override_comprehensive_forms(self) -> None:
+        cases = [
+            ("เขต 15", "15"),
+            ("แขต 15", "15"),
+            ("เขตที่ 15", "15"),
+            ("15 เขต", "15"),
+            ("แก้ไข เขต=101", "101"),
+        ]
+        for message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(parse_area_id_override(message), expected)
+                self.assertTrue(looks_like_area_correction_text(message))
+
+    def test_parse_area_id_override_resolves_district_name(self) -> None:
+        lookup = DistrictLookup(url="https://example.test/districts.json")
+        lookup._districts = [
+            {
+                "id": 3,
+                "provinceCode": 10,
+                "districtNameTh": "หนองจอก",
+                "areaNumber": 3,
+            }
+        ]
+        lookup._by_id = {"3": lookup._districts[0]}
+        lookup._by_name = {"หนองจอก": lookup._districts[0]}
+        lookup._cached_at = monotonic()
+
+        with patch("hermes.governor_results.area_resolution.get_district_lookup", return_value=lookup):
+            self.assertEqual(parse_area_id_override("เขต หนองจอก"), "3")
+            self.assertEqual(parse_area_id_override("แก้ไข หนองจอก"), "3")
+
+    def test_build_approval_prompt_text_shows_district_name(self) -> None:
+        lookup = DistrictLookup(url="https://example.test/districts.json")
+        lookup._districts = [
+            {
+                "id": 13,
+                "provinceCode": 10,
+                "districtNameTh": "สายไหม",
+                "areaNumber": 13,
+            }
+        ]
+        lookup._by_id = {"13": lookup._districts[0]}
+        lookup._cached_at = monotonic()
+
+        with patch("hermes.governor_results.area_resolution.get_district_lookup", return_value=lookup):
+            text = build_approval_prompt_text({"revision": 1, "area_id": "13", "report_type": "score_sheet"})
+            self.assertIn("เขต: เขต 13 สายไหม", text)
+
+    def test_parse_candidate_score_overrides_comprehensive_forms(self) -> None:
+        from hermes.supervisor.intake_server import (
+            looks_like_candidate_score_correction_text,
+            parse_candidate_score_overrides,
+        )
+
+        cases = [
+            ("4=14", [(4, 14)]),
+            ("แก้ไข 4=14", [(4, 14)]),
+            ("ผู้สมัคร 4=14", [(4, 14)]),
+            ("ผู้สมัคร 4 14", [(4, 14)]),
+            ("เบอร์ 4=14", [(4, 14)]),
+            ("คะแนน 4=14", [(4, 14)]),
+            ("คะแนน 4 เป็น 14", [(4, 14)]),
+        ]
+        for message, expected in cases:
+            with self.subTest(message=message):
+                parsed = [(item.candidate_number, item.score) for item in parse_candidate_score_overrides(message)]
+                self.assertEqual(parsed, expected)
+                self.assertTrue(looks_like_candidate_score_correction_text(message))
+
+        self.assertEqual(parse_candidate_score_overrides("ไม่ออกเสียง 30"), [])
+        self.assertEqual(parse_ballot_summary_overrides("ไม่ออกเสียง 30"), {"vote_no": 30})
+
+    def test_correction_command_updates_single_ballot_summary_field(self) -> None:
+        self.store.persist_line_event(self._make_image_event("IMG_CORR_BALLOT"), received_at="2026-06-10T10:00:00Z")
+        self._setup_awaiting_approval("src_IMG_CORR_BALLOT")
+
+        source_manifest_path = "dev/messages/src_IMG_CORR_BALLOT/manifest.json"
+        src_manifest = json.loads(self.s3_client.objects[("election-system", source_manifest_path)].decode("utf-8"))
+        draft_path = src_manifest["current_draft_key"]
+        draft_manifest = json.loads(self.s3_client.objects[("election-system", draft_path)].decode("utf-8"))
+        draft_manifest["area_id"] = "12"
+        draft_manifest["election_id"] = "election-2026"
+        draft_manifest["report_type"] = "ballot_summary"
+        draft_manifest["voter_turnout"] = 900
+        draft_manifest["valid_ballots"] = 850
+        draft_manifest["invalid_ballots"] = 20
+        draft_manifest["vote_no"] = 30
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key=draft_path,
+            Body=json.dumps(draft_manifest).encode("utf-8")
+        )
+
+        self.store.persist_line_event(
+            self._make_approval_event("CORRECT_BALLOT", "แก้ไข ผู้มีสิทธิ 1000"),
+            received_at="2026-06-10T10:15:00Z",
+        )
+
+        corrected_draft = json.loads(
+            self.s3_client.objects[("election-system", "dev/messages/src_IMG_CORR_BALLOT/draft_r2.json")].decode("utf-8")
+        )
+        next_approval = json.loads(
+            self.s3_client.objects[("election-system", "dev/messages/src_IMG_CORR_BALLOT/approval_r2.json")].decode("utf-8")
+        )
+
+        self.assertEqual(corrected_draft["eligible_voters"], 1000)
+        self.assertEqual(corrected_draft["voter_turnout"], 900)
+        self.assertEqual(corrected_draft["valid_ballots"], 850)
+        self.assertEqual(corrected_draft["invalid_ballots"], 20)
+        self.assertEqual(corrected_draft["vote_no"], 30)
+        self.assertEqual(corrected_draft["abstained_ballots"], 30)
+        self.assertEqual(
+            corrected_draft["correction_payload"]["ballot_summary_overrides"],
+            {"eligible_voters": 1000},
+        )
+        self.assertEqual(next_approval["state"], "awaiting_approval")
+
+    def test_resolve_correction_keeps_candidate_scores_on_score_sheet(self) -> None:
+        candidate_overrides, ballot_overrides, _ = resolve_correction_overrides(
+            "แก้ไข 4=14",
+        )
+        self.assertEqual(len(candidate_overrides), 1)
+        self.assertEqual(candidate_overrides[0].candidate_number, 4)
+        self.assertEqual(candidate_overrides[0].score, 14)
+        self.assertEqual(ballot_overrides, {})
+
+    def test_looks_like_ballot_summary_correction_text(self) -> None:
+        self.assertTrue(looks_like_ballot_summary_correction_text("บัตรดี 850"))
+        self.assertTrue(looks_like_ballot_summary_correction_text("แก้ไข บัตรเสีย 20"))
+        self.assertFalse(looks_like_ballot_summary_correction_text("สวัสดีครับ"))
+
+    def test_text_ballot_correction_without_prefix_updates_draft(self) -> None:
+        self.store.persist_line_event(self._make_image_event("IMG_BALLOT_TEXT"), received_at="2026-06-10T10:00:00Z")
+        self._setup_awaiting_approval("src_IMG_BALLOT_TEXT")
+
+        source_manifest_path = "dev/messages/src_IMG_BALLOT_TEXT/manifest.json"
+        src_manifest = json.loads(self.s3_client.objects[("election-system", source_manifest_path)].decode("utf-8"))
+        draft_path = src_manifest["current_draft_key"]
+        draft_manifest = json.loads(self.s3_client.objects[("election-system", draft_path)].decode("utf-8"))
+        draft_manifest["area_id"] = "12"
+        draft_manifest["election_id"] = "election-2026"
+        draft_manifest["report_type"] = "ballot_summary"
+        draft_manifest["candidate_scores"] = []
+        self.s3_client.put_object(
+            Bucket="election-system",
+            Key=draft_path,
+            Body=json.dumps(draft_manifest).encode("utf-8"),
+        )
+
+        self.store.persist_line_event(
+            self._make_approval_event("BALLOT_TEXT", "บัตรดี 850"),
+            received_at="2026-06-10T10:15:00Z",
+        )
+
+        corrected_draft = json.loads(
+            self.s3_client.objects[("election-system", "dev/messages/src_IMG_BALLOT_TEXT/draft_r2.json")].decode("utf-8")
+        )
+        self.assertEqual(corrected_draft["valid_ballots"], 850)
+        self.assertEqual(
+            corrected_draft["correction_payload"]["ballot_summary_overrides"],
+            {"valid_ballots": 850},
+        )
 
     def test_correction_command_updates_area_id_and_submissions(self) -> None:
         self.store.persist_line_event(self._make_image_event("IMG_CORR_AREA"), received_at="2026-06-10T10:00:00Z")
